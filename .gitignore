@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+.pytest_cache/
+
+# Virtual environment
+.venv/
+
+# Archive (历史归档)
+archive/
+
+# Claude Code config
+.claude/
+
+# Data files (may contain commercial/proprietary data)
+data/

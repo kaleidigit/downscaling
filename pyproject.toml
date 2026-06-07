@@ -1,0 +1,14 @@
+[project]
+name = "downscaling"
+version = "0.1.0"
+description = "GCAM regional-to-country downscaling for SDG indicators"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "numpy>=1.24",
+    "matplotlib>=3.10.9",
+]
+
+[tool.uv]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"

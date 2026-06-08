@@ -59,6 +59,12 @@ class TestGammaC:
     def test_negative_gdp_returns_one(self):
         assert gamma_c(-50.0, 100.0) == 1.0
 
+    def test_extremely_poor_country_floor(self):
+        """极端贫困国（GDP_pcap < 3.6% 世界均值）→ gamma 不低于 0.01。"""
+        g = gamma_c(1.0, 100.0)  # 1% of world avg
+        assert g >= 0.01
+        assert g > 0  # 不应为负（防止收敛方向反转）
+
 
 # ═══════════════════════════════════════════════════════════
 # phi_kaya

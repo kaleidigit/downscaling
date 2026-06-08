@@ -199,7 +199,8 @@ def gamma_c(gdp_pcap_2015: float, gdp_pcap_world_2015: float) -> float:
         return 1.0
     if not np.isfinite(gdp_pcap_2015) or gdp_pcap_2015 <= 0:
         return 1.0
-    return 1.0 + 0.3 * np.log(gdp_pcap_2015 / gdp_pcap_world_2015)
+    gam = 1.0 + 0.3 * np.log(gdp_pcap_2015 / gdp_pcap_world_2015)
+    return max(gam, 0.01)  # 极端贫困国最低收敛速度，防止负 γ 导致发散
 
 
 def phi_kaya(t: int, gamma: float, tc: int) -> float:

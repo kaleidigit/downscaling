@@ -337,7 +337,7 @@ E_c_final(t) = [E_c_proj(t) / Σ_k E_k_proj(t)] × E_R(t)    # k ∈ region R
 **参数**：
 | 参数 | 值 | 来源 |
 |------|---|------|
-| γ_c | `1.0 + 0.3 × log(G_c/G_world)`（按人均 GDP 调整）| van Vuuren 2007 框架，0.3 系数为校准值，**未在文献中找到确切出处** |
+| γ_c | `1.0 + 0.3 × log(GDP_pcap_c / GDP_pcap_world)`（人均 GDP 比值）| van Vuuren 2007 框架，0.3 系数为校准值，**未在文献中找到确切出处** |
 | t_c | SSP126=2070, SSP245=2085, SSP434=2100, SSP460=2100 | 合理推断，与 SSP 叙事一致但**非文献指定值** |
 
 > ⚠️ γ_c 中的 0.3 系数和 t_c 收敛年份为项目内部校准参数，非来自原始文献的默认值。
@@ -353,37 +353,58 @@ E_c_final(t) = [E_c_proj(t) / Σ_k E_k_proj(t)] × E_R(t)    # k ∈ region R
 **步骤 1 — ENLONG（长期投影）**：对每个 GCAM 区域做 log-log 回归
 ```
 log(TFC_region / GDP_region) = α + β × log(GDP_region / POP_region)
-# 使用 GCAM 时间序列 (2015-2100) 作为回归数据
+# 使用 GCAM 时间序列 (1990, 2005, 2010, 2015-2100) 作为回归数据
 # 然后将回归系数应用到区域内每个国家：
 ENLONG_c(t) = exp(α + β × log(GDP_c(t) / POP_c(t))) × GDP_c(t)
 ```
 回归使用官方 `fit_funcs.py` 中的 `LogLogFunc` 类（直接调用，零修改）。
 
-**步骤 2 — ENSHORT（短期投影）**：GDP 缩放（因缺乏 1980-2015 历史 IEA 数据）
-```
-ENSHORT_c(t) = I_c(2015) × GDP_c(t)
-# 即保持基年能源强度不变
-```
-> 官方 DSCALE 对每个国家用 1980-2015 IEA 历史数据做独立 log-log 回归来获取 ENSHORT 参数。
-> 本项目仅有 2015 年 IEA 单年快照（注：`补充资料/OECD.IEA,WORLDBAL...csv` 含 2015-2020 共 6 年数据，可用但不足以做稳健回归），
-> 因此 ENSHORT 简化为 GDP 缩放。这是与官方实现的主要差异。
+**步骤 2 — ENSHORT（短期投影）**：逐国历史 log-log 回归
 
-**步骤 3 — MAX_TC 收敛**（`fun_max_tc_convergence`，直接复刻自官方代码）
+数据源：IEA WORLDBAL (1970-2020 TFC) + USDA GDP (1969-2017) + UN Population (1950-2020)
+
 ```
-β_enlong = max(|β|, 1.0)    # 来自 ENLONG 回归
-CONV_WEIGHT = ((t - MAX_TC) / (2010 - MAX_TC)) ^ β_enlong
+log(TFC_c / GDP_c) = α + β × log(GDP_c / POP_c)          # 对每个国家分别回归
+α += log(EI_base) - (α + β × log(GDP_pcap_base))         # alpha 调和至基年观测值
+EI_c(t) = clip(exp(α + β × log(GDP_c(t)/POP_c(t))), 0, 1)  # 封顶到 [0,1]
+ENSHORT_c(t) = EI_c(t) × GDP_c(t)
+```
+
+**覆盖率**：148 个有 WORLDBAL TFC 数据的国家中，143 个（96.6%）满足 ≥5 对齐数据点要求，
+成功拟合 ENSHORT 回归（全部拥有 40+ 数据点）。瓶颈不在 TFC（WORLDBAL 覆盖充分），
+而在 USDA GDP 历史数据的国家覆盖。
+
+**5 个回退到 GDP 缩放的国家**：
+
+| ISO | 国家 | 失败原因 |
+|-----|------|---------|
+| `mne` | Montenegro | USDA GDP 无数据；2006 年从塞尔维亚独立，历史经济数据归属于前身国家 |
+| `prk` | North Korea | USDA GDP 无数据；极端封闭经济体 |
+| `qat` | Qatar | USDA GDP 无数据；合成 GDP 国家 |
+| `rou` | Romania | USDA GDP 无数据；SSP 数据库 GDP 仅有 2010 一个历史年份（不足 ≥5）|
+| `zwe` | Zimbabwe | 同上，SSP GDP 仅有 2010 一年 |
+
+> 官方 DSCALE 使用 1980-2015 逐国 IEA 回归。本项目回退优先级：
+> (a) log-log 历史回归（≥5 对齐点，143 国），
+> (b) 2015-2020 IEA 能源强度 CAGR 外推，
+> (c) GDP 缩放（恒定基年 EI，5 国）。
+
+**步骤 3 — MAX_TC 收敛**（来自官方 `Energy_demand_downs_1.py:650-675`）
+```
+CONV_WEIGHT = ((t - MAX_TC) / (2010 - MAX_TC)) ^ clip(β, 1, ∞)
 CONV_WEIGHT = clip(CONV_WEIGHT, 0, 1)
-E_c(t) = ENSHORT × CONV_WEIGHT + ENLONG × (1 - CONV_WEIGHT)
-MAX_TC = 动态计算 (2040-2200, 基于 R²)
+E_c(t) = ENSHORT × CONV_WEIGHT + ENLONG_RATIO × (1 - CONV_WEIGHT)
 ```
+β 优先使用逐国 ENSHORT 回归斜率（与官方一致），无 ENSHORT 回归时回退到区域 ENLONG β。
+MAX_TC 通过 `fun_max_tc()` 动态计算（2040-2200），基于 ENSHORT 回归质量 + β 符号一致性。
 
-**步骤 4**：计算 TFC + 区域守恒（同 A 步骤 3-4）
+**步骤 4**：区域守恒校准（同 A 步骤 4）
 
 **关键参数**：
 | 参数 | 值 |
 |------|---|
-| MAX_TC | 2040-2200（动态，基于 ENLONG 回归 R²）|
-| β 指数 | clip(|β_enlong|, 1, ∞) |
+| MAX_TC | 2040-2200（动态，基于 ENSHORT 回归质量 + β 符号一致性）|
+| β 指数 | `clip(β, 1, ∞)`（优先 ENSHORT β，回退 ENLONG β；负 β→1）|
 | 收敛方向 | ENSHORT → ENLONG（近期ENSHORT主导，远期ENLONG主导）|
 
 ---

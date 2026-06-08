@@ -273,11 +273,17 @@ def read_gcam_generic(
                 df = df[df[col].astype(str).str.strip().str.lower() == val.lower()]
 
     # 主筛选
-    if filter_col and filter_col in df.columns:
-        if filter_value:
+    if filter_col:
+        if filter_col not in df.columns:
+            import warnings
+            warnings.warn(f"GCAM filter column '{filter_col}' not found in {path.name}; skipping filter")
+        elif filter_value:
             df = df[df[filter_col].astype(str).str.strip().str.lower() == filter_value.lower()]
 
     # Units
+    if "Units" not in df.columns:
+        import warnings
+        warnings.warn(f"GCAM file {path.name} missing 'Units' column; assuming raw unit = target unit (no conversion)")
     unit = str(df["Units"].iloc[0]).strip() if "Units" in df.columns else ""
     factor = unit_factor if unit_factor != 1.0 else (1_000_000 if "EJ" in unit.upper() else 1.0)
 

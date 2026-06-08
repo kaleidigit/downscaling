@@ -67,6 +67,7 @@ class IndicatorConfig:
         iea_flow: str,
         iea_product: str,
         iea_year: str,
+        iea_unit_factor: float = 1.0,     # IEA → 目标单位转换
         # EDGAR 基准（备选）
         edgar_path: Path | None = None,
         edgar_filter_col: str | None = None,
@@ -88,6 +89,7 @@ class IndicatorConfig:
         self.iea_flow = iea_flow
         self.iea_product = iea_product
         self.iea_year = iea_year
+        self.iea_unit_factor = iea_unit_factor
         self.edgar_path = edgar_path
         self.edgar_filter_col = edgar_filter_col
         self.edgar_filter_value = edgar_filter_value
@@ -176,8 +178,8 @@ INDICATORS: dict[str, IndicatorConfig] = {
         gcam_file_pattern="GCAM_elec_{scenario}.xlsx",
         gcam_filter_col="output", gcam_filter_value="electricity",
         gcam_extra_filter={"subsector": "Total", "technology": "Total"},
-        gcam_unit_factor=1.0,  # 已为 TJ (assume from GCAM)
-        iea_path=IEA_ELEC_PATH,
+        gcam_unit_factor=3.6,  # GWh → TJ
+        iea_path=IEA_ELEC_PATH, iea_unit_factor=3.6,  # GWh → TJ
         iea_flow="Electricity output", iea_product="Total", iea_year="2015",
         output_prefix="Elec",
     ),
@@ -224,8 +226,8 @@ INDICATORS: dict[str, IndicatorConfig] = {
         gcam_file_pattern="GCAM_renewable_elec_{scenario}.xlsx",
         gcam_filter_col="output", gcam_filter_value="electricity",
         gcam_extra_filter={"subsector": "Renewable", "technology": "Renewable"},
-        gcam_unit_factor=1.0,
-        iea_path=IEA_ELEC_REN_PATH,
+        gcam_unit_factor=3.6,  # GWh → TJ
+        iea_path=IEA_ELEC_REN_PATH, iea_unit_factor=3.6,  # GWh → TJ
         iea_flow="Electricity output", iea_product="Total of renewable energy sources", iea_year="2015",
         output_prefix="GreenElec",
     ),

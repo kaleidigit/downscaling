@@ -53,13 +53,58 @@ def test_regional_conservation(scenario, method, key, cfg):
             continue
 
         region_total = region_rows[yrs].sum()
-        # 单国区域：国家值 = GCAM 区域值（通过守恒强制执行）
         if len(region_isos) <= 1:
             assert len(region_rows) <= 1, f"{region}: 单国区域不应有多行"
         else:
-            # 多国区域：仅验证无 NaN
             assert not region_total.isna().any(), \
                 f"{method}/{key}/{scenario} {region}: 区域总量含 NaN"
+
+
+# ══════════════════════════════════════════════
+# 测试 1b: 区域守恒数值验证（抽样检查多国区域）
+# ══════════════════════════════════════════════
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+@pytest.mark.parametrize("method", METHODS)
+@pytest.mark.parametrize("key", ["tfc", "electricity", "tes"])
+def test_conservation_sums_match_gcam(scenario, method, key):
+    """多国区域的国家值之和必须等于 GCAM 区域值（容差 1e-4 TJ）。"""
+    cfg = INDICATORS[key]
+    df = _load(method, cfg.output_prefix, scenario)
+    yrs = _year_cols(df)
+    mapping = load_mapping()
+    members = build_region_members(mapping)
+
+    # 加载 GCAM 数据用于对比
+    from compare.common.downscale import load_gcam
+    gcam = load_gcam(cfg, scenario)
+
+    for region, mlist in members.items():
+        region_isos = set()
+        for m in mlist:
+            iso = m["iso"]
+            if iso in EXCLUDED_ISO:
+                continue
+            region_isos.add("chn" if iso == "twn" else iso)
+        if len(region_isos) <= 1:
+            continue  # 单国区域通过 _regional_conserve 保证
+
+        region_rows = df[df["iso"].isin(region_isos)]
+        if region_rows.empty:
+            continue
+
+        for y in yrs:
+            country_sum = float(region_rows[y].sum())
+            # GCAM 区域值
+            gcam_row = gcam[(gcam["Scenario"] == scenario) & (gcam["Region"] == region)]
+            if gcam_row.empty:
+                continue
+            gcam_val = float(gcam_row[y].iloc[0]) if y in gcam_row.columns else 0.0
+
+            rel_tol = max(1e-4, abs(gcam_val) * 1e-10)
+            msg = (f"{method}/{key}/{scenario} {region} {y}: "
+                   f"sum={country_sum:.2f} vs GCAM={gcam_val:.2f}, diff={abs(country_sum-gcam_val):.2f}")
+            assert abs(country_sum - gcam_val) < rel_tol, msg
 
 
 # ══════════════════════════════════════════════

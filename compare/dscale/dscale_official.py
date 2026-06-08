@@ -160,7 +160,7 @@ def fit_enlong_official(
 
     mask = (gdp_pcap > 0) & (ei > 0)
     if mask.sum() < 3:
-        ff = LogLogFunc(alpha=0.0, beta=0.0)
+        ff = LogLogFunc(alpha=0.0, beta=1.0)  # beta=1: clip(1,∞)=1, convergence is linear
         ff.r_squared = 0.0
         return ff
 
@@ -378,7 +378,7 @@ def downscale_dscale_official(
                 ep = enshort_params.get(iso)
                 if ep and ep.get("r_squared", 0) > 0 and g_c_y > 0 and p_c_y > 0:
                     # 官方 log-log 回归: log(EI) = α + β × log(GDP/POP)
-                    gdp_pcap = g_c_y / max(p_c_y, 1.0)
+                    gdp_pcap = g_c_y / max(p_c_y, 1e-6)
                     ei_enshort = float(np.clip(
                         np.exp(ep["alpha"] + ep["beta"] * np.log(max(gdp_pcap, 1e-10))),
                         0.0, 1.0))  # A4: 官方 step1_fun_enshort_ei .clip(0,1)
@@ -398,11 +398,13 @@ def downscale_dscale_official(
                     enlong_val = enshort_val
 
                 # ── 官方收敛公式（含 β 指数）──
+                # 官方使用逐国 ENSHORT β（BETA 列）；无 ENSHORT 回归时回退到 β_enlong
+                conv_beta = ep.get("beta", beta_enlong) if ep and ep.get("r_squared", 0) > 0 else beta_enlong
                 t_arr = np.array([y], dtype=float)
                 es_arr = np.array([enshort_val], dtype=float)
                 el_arr = np.array([enlong_val], dtype=float)
                 mtc_arr = np.array([max_tc], dtype=float)
-                beta_arr = np.array([beta_enlong], dtype=float)
+                beta_arr = np.array([conv_beta], dtype=float)
 
                 converged = fun_max_tc_convergence(es_arr, el_arr, t_arr, mtc_arr, beta_arr)
                 projections[iso][y] = float(converged[0])

@@ -48,7 +48,10 @@ def load_baseline(cfg: IndicatorConfig) -> dict[str, float]:
             return read_edgar_industry(cfg.edgar_path)
         elif cfg.key == "co2_emissions":
             return read_edgar_co2(cfg.edgar_path)
-    return read_iea_generic(cfg.iea_path, cfg.iea_flow, cfg.iea_product, cfg.iea_year)
+    result = read_iea_generic(cfg.iea_path, cfg.iea_flow, cfg.iea_product, cfg.iea_year)
+    if cfg.iea_unit_factor != 1.0:
+        result = {iso: v * cfg.iea_unit_factor for iso, v in result.items()}
+    return result
 
 
 def load_gcam(cfg: IndicatorConfig, scenario: str) -> pd.DataFrame:
@@ -448,15 +451,26 @@ def downscale_logit(
 
         region_iea_sum = sum(iea_baseline.get(iso, 0.0) for iso in region_isos)
 
-        for iso in region_isos:
-            base_val = iea_baseline.get(iso, 0.0)
-            share = base_val / region_iea_sum if region_iea_sum > 0 else 0.0
-            row = {"Scenario": scenario, "iso": iso,
-                   "Country": iso_info.get(iso, {}).get("Country", ""),
-                   "Region": region}
-            for y in YEARS:
-                row[y] = share * float(g_row.get(y, 0) or 0)
-            rows_out.append(row)
+        if region_iea_sum <= 0:
+            # 区域内所有国家 IEA 基准均为零：均分 GCAM 区域值
+            equal_share = 1.0 / n_r if n_r > 0 else 0.0
+            for iso in region_isos:
+                row = {"Scenario": scenario, "iso": iso,
+                       "Country": iso_info.get(iso, {}).get("Country", ""),
+                       "Region": region}
+                for y in YEARS:
+                    row[y] = equal_share * float(g_row.get(y, 0) or 0)
+                rows_out.append(row)
+        else:
+            for iso in region_isos:
+                base_val = iea_baseline.get(iso, 0.0)
+                share = base_val / region_iea_sum
+                row = {"Scenario": scenario, "iso": iso,
+                       "Country": iso_info.get(iso, {}).get("Country", ""),
+                       "Region": region}
+                for y in YEARS:
+                    row[y] = share * float(g_row.get(y, 0) or 0)
+                rows_out.append(row)
 
     return _finalize_df(rows_out, gcam_scen)
 
@@ -552,27 +566,21 @@ def run_indicator(
     cfg: IndicatorConfig,
 ) -> pd.DataFrame:
     """对指定指标运行指定方案，返回降尺度 DataFrame。"""
-    # 加载基年基准
     iea_single = load_baseline(cfg)
 
-    # 构建完整 IEA 基准（Logit 需要 Other 拆分；Kaya/DSCALE 也使用相同基准以保持一致性）
     iea_other = load_iea_other(cfg)
     iea_baseline = build_iea_baseline(iea_single, iea_other, scenario)
 
-    # 加载 GCAM
     gcam = load_gcam(cfg, scenario)
 
-    # DSCALE 路由至官方算法（含 LogLogFunc、动态 MAX_TC、EI 封顶）
     if method == "dscale":
         from ..dscale.dscale_official import downscale_dscale_generic
-        return downscale_dscale_generic(iea_baseline, gcam, scenario)
+        df = downscale_dscale_generic(iea_baseline, gcam, scenario)
+    else:
+        fn = METHOD_FUNCTIONS[method]
+        df = fn(iea_baseline, gcam, scenario, cfg)
 
-    fn = METHOD_FUNCTIONS[method]
-
-    # 降尺度
-    df = fn(iea_baseline, gcam, scenario, cfg)
-
-    # 校验和输出
+    # 校验和输出（所有方法统一）
     gcam_scen = gcam[gcam["Scenario"] == scenario]
     reports = [
         check_regional_conservation(df, gcam_scen),

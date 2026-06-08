@@ -66,40 +66,33 @@ def main():
     print(f"Phase 2: Derived shares ({len(DERIVED_SHARES)} indicators × {len(METHODS)} methods × {len(SCENARIOS)} scenarios)")
     print("=" * 70)
 
-    from compare.common.downscale import compute_logit_share, load_gcam
+    from compare.common.downscale import (
+        compute_logit_share, compute_kaya_share, compute_dscale_share, load_gcam,
+    )
+
+    share_functions = {
+        "logit": compute_logit_share,
+        "kaya": compute_kaya_share,
+        "dscale": compute_dscale_share,
+    }
 
     share_count = 0
     for share_key, spec in DERIVED_SHARES.items():
         num_key = spec["numerator"]
         den_key = spec["denominator"]
+        cfg_num = INDICATORS.get(num_key)
+        cfg_den = INDICATORS.get(den_key)
+        if cfg_num is None or cfg_den is None:
+            continue
         for method in METHODS:
             for sc in SCENARIOS:
                 try:
                     df_num = _load_output(method, num_key, sc)
                     df_den = _load_output(method, den_key, sc)
 
-                    if method == "logit" and num_key in INDICATORS and den_key in INDICATORS:
-                        # 使用真正的 Logit 变换方法（logit降尺度方案.md 阶段 1-3）
-                        cfg_num = INDICATORS[num_key]
-                        cfg_den = INDICATORS[den_key]
-                        gcam_num = load_gcam(cfg_num, sc)
-                        gcam_den = load_gcam(cfg_den, sc)
-                        df_share = compute_logit_share(df_num, df_den, gcam_num, gcam_den, sc)
-                    else:
-                        # Kaya/DSCALE: 分子/分母直接比值
-                        num_years = df_num[["iso"] + list(YEARS)].copy()
-                        den_years = df_den[["iso"] + list(YEARS)].copy()
-                        merged = num_years.merge(den_years, on="iso",
-                                                 suffixes=("_num", "_den"), how="inner")
-                        for y in YEARS:
-                            n_col = f"{y}_num"
-                            d_col = f"{y}_den"
-                            if n_col in merged.columns and d_col in merged.columns:
-                                merged[y] = merged[n_col] / merged[d_col].clip(1e-10)
-                        df_share = merged[["iso"] + list(YEARS)].copy()
-                        df_share["Scenario"] = sc
-                        df_share["Country"] = df_num.set_index("iso").loc[df_share["iso"], "Country"].values
-                        df_share["Region"] = df_num.set_index("iso").loc[df_share["iso"], "Region"].values
+                    gcam_num = load_gcam(cfg_num, sc)
+                    gcam_den = load_gcam(cfg_den, sc)
+                    df_share = share_functions[method](df_num, df_den, gcam_num, gcam_den, sc)
 
                     write_output_for(df_share, method, sc, share_key)
                     share_count += 1

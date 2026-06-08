@@ -682,12 +682,15 @@ def compute_logit_share(
             # 初始 R
             R_current = {iso: E_c.get(iso, 0.0) * S_proj[iso][y] for iso in region_isos}
 
+            converged = False
             for _ in range(max_iter):
                 sum_R = sum(R_current.values())
                 if sum_R < 1e-12:
+                    converged = True
                     break
                 error = target - sum_R
                 if abs(error) < tol:
+                    converged = True
                     break
 
                 # 缩放因子
@@ -714,6 +717,12 @@ def compute_logit_share(
                         for iso in uncapped:
                             R_current[iso] += freed_amount * (R_current[iso] / uncapped_sum)
 
+            if not converged:
+                import warnings
+                warnings.warn(
+                    f"Logit share iteration did not converge for {region} {y} "
+                    f"(error={abs(target - sum(R_current.values())):.2e} after {max_iter} iters)"
+                )
             # 最终份额（强制 [0,1] 封顶）
             for iso in region_isos:
                 e = E_c.get(iso, 0.0)
@@ -731,7 +740,278 @@ def compute_logit_share(
             rows_out.append(row)
 
     df_out = pd.DataFrame(rows_out)
-    # Fill Country from numerator data
+    iso_country = df_num.set_index("iso")["Country"].to_dict()
+    df_out["Country"] = df_out["iso"].map(iso_country).fillna("")
+    return df_out
+
+
+def compute_kaya_share(
+    df_num: pd.DataFrame,
+    df_den: pd.DataFrame,
+    gcam_num: pd.DataFrame,
+    gcam_den: pd.DataFrame,
+    scenario: str,
+    eps: float = 1e-4,
+    max_iter: int = 50,
+    tol: float = 1e-6,
+) -> pd.DataFrame:
+    """Kaya 收敛法在 Logit 空间：L_c(t) = L_c(2015) + φ_Kaya(t) × ΔL_R(t)。
+
+    阶段 1-3 与 compute_logit_share 相同，仅阶段 2 用 Kaya φ 函数
+    替换了完整的 ΔL 叠加。保留了 Kaya 的逐国收敛速度差异，
+    同时天然保证份额 ∈ [0,1]。
+    """
+    mapping = load_mapping()
+    members_by_region = build_region_members(mapping)
+
+    gcam_num_scen = gcam_num[gcam_num["Scenario"] == scenario]
+    gcam_den_scen = gcam_den[gcam_den["Scenario"] == scenario]
+
+    # Kaya 参数
+    tc = TC_DEFAULT.get(scenario, 2100)
+    gdp_c = read_gdp_country(gdp_country_path(scenario)).set_index("iso")
+    pop_c = read_pop_country(pop_country_path(scenario)).set_index("iso")
+    pop_world_2015 = float(pop_c[2015].sum())
+    gdp_world_2015 = float(gdp_c[2015].sum())
+    gdp_pcap_world = gdp_world_2015 / pop_world_2015 if pop_world_2015 > 0 else 1.0
+
+    rows_out = []
+    for _, g_row_num in gcam_num_scen.iterrows():
+        region = g_row_num["Region"]
+        g_row_den = gcam_den_scen[gcam_den_scen["Region"] == region]
+        if g_row_den.empty:
+            continue
+        g_row_den = g_row_den.iloc[0]
+
+        mlist = members_by_region.get(region, [])
+        region_isos = _region_isos(mlist)
+
+        # 阶段 1：Logit 变换
+        L_c_2015: dict[str, float] = {}
+        for iso in region_isos:
+            num_2015 = float(df_num[df_num["iso"] == iso][2015].values[0]) if len(df_num[df_num["iso"] == iso]) > 0 else 0.0
+            den_2015 = float(df_den[df_den["iso"] == iso][2015].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
+            s = num_2015 / den_2015 if den_2015 > 0 else 0.0
+            s = np.clip(s, eps, 1 - eps)
+            L_c_2015[iso] = np.log(s / (1 - s))
+
+        # GCAM 区域份额 → Logit
+        L_R: dict[int, float] = {}
+        for y in YEARS:
+            nr = float(g_row_num.get(y, 0) or 0)
+            dr = float(g_row_den.get(y, 0) or 0)
+            s_r = nr / dr if dr > 0 else 0.0
+            s_r = np.clip(s_r, eps, 1 - eps)
+            L_R[y] = np.log(s_r / (1 - s_r))
+
+        L_R_2015 = L_R.get(2015, 0.0)
+        delta_L_R: dict[int, float] = {y: L_R[y] - L_R_2015 for y in YEARS}
+
+        # 阶段 2：Kaya φ 缩放的 Logit 趋势
+        S_proj: dict[str, dict[int, float]] = {}
+        for iso in region_isos:
+            g_2015 = float(gdp_c.loc[iso, 2015]) if iso in gdp_c.index else 0.0
+            p_2015 = float(pop_c.loc[iso, 2015]) if iso in pop_c.index else 1.0
+            gdp_pcap_2015 = g_2015 / p_2015 if p_2015 > 0 else 0.0
+            gam = gamma_c(gdp_pcap_2015, gdp_pcap_world)
+
+            S_proj[iso] = {}
+            L_c = L_c_2015.get(iso, 0.0)
+            for y in YEARS:
+                phi_t = phi_kaya(y, gam, tc)
+                L_proj = L_c + phi_t * delta_L_R.get(y, 0.0)
+                S_proj[iso][y] = 1.0 / (1.0 + np.exp(-L_proj))
+
+        # 阶段 3：迭代缩放封顶校准（与 compute_logit_share 相同）
+        for y in YEARS:
+            target = float(g_row_num.get(y, 0) or 0)
+            E_c: dict[str, float] = {}
+            for iso in region_isos:
+                E_c[iso] = float(df_den[df_den["iso"] == iso][y].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
+
+            R_current = {iso: E_c.get(iso, 0.0) * S_proj[iso][y] for iso in region_isos}
+            converged = False
+            for _ in range(max_iter):
+                sum_R = sum(R_current.values())
+                if sum_R < 1e-12:
+                    converged = True
+                    break
+                error = target - sum_R
+                if abs(error) < tol:
+                    converged = True
+                    break
+                k = target / sum_R if sum_R > 0 else 1.0
+                capped_isos: set[str] = set()
+                freed_amount = 0.0
+                for iso in region_isos:
+                    R_temp = R_current[iso] * k
+                    e = E_c.get(iso, 0.0)
+                    if e > 0 and R_temp > e:
+                        R_current[iso] = e
+                        capped_isos.add(iso)
+                        freed_amount += (R_temp - e)
+                    else:
+                        R_current[iso] = R_temp
+                if capped_isos and freed_amount > 0:
+                    uncapped = [iso for iso in region_isos if iso not in capped_isos]
+                    uncapped_sum = sum(R_current[iso] for iso in uncapped)
+                    if uncapped_sum > 0 and len(uncapped) > 0:
+                        for iso in uncapped:
+                            R_current[iso] += freed_amount * (R_current[iso] / uncapped_sum)
+            if not converged:
+                import warnings
+                warnings.warn(
+                    f"Kaya share iteration unconverged for {region} {y} "
+                    f"(error={abs(target - sum(R_current.values())):.2e} after {max_iter} iters)"
+                )
+            for iso in region_isos:
+                e = E_c.get(iso, 0.0)
+                if e > 0:
+                    R_current[iso] = min(R_current[iso], e)
+                    S_proj[iso][y] = R_current[iso] / e
+                else:
+                    S_proj[iso][y] = 0.0
+
+        for iso in region_isos:
+            row = {"Scenario": scenario, "iso": iso,
+                   "Country": "", "Region": region}
+            for y in YEARS:
+                row[y] = round(S_proj[iso][y], 6)
+            rows_out.append(row)
+
+    df_out = pd.DataFrame(rows_out)
+    iso_country = df_num.set_index("iso")["Country"].to_dict()
+    df_out["Country"] = df_out["iso"].map(iso_country).fillna("")
+    return df_out
+
+
+def compute_dscale_share(
+    df_num: pd.DataFrame,
+    df_den: pd.DataFrame,
+    gcam_num: pd.DataFrame,
+    gcam_den: pd.DataFrame,
+    scenario: str,
+    eps: float = 1e-4,
+    max_iter: int = 50,
+    tol: float = 1e-6,
+) -> pd.DataFrame:
+    """DSCALE 收敛法在 Logit 空间。
+
+    ENSHORT: L_c(2015)（保持基年份额）
+    ENLONG:  L_c(2015) + ΔL_R(t)（完全跟随区域趋势）
+    收敛:    CONV_WEIGHT = clip((t-MAX_TC)/(2010-MAX_TC), 0, 1)
+             L_c(t) = ENSHORT × CONV_WEIGHT + ENLONG × (1-CONV_WEIGHT)
+    """
+    mapping = load_mapping()
+    members_by_region = build_region_members(mapping)
+
+    gcam_num_scen = gcam_num[gcam_num["Scenario"] == scenario]
+    gcam_den_scen = gcam_den[gcam_den["Scenario"] == scenario]
+
+    max_tc = 2200.0  # DSCALE 默认 — 慢收敛
+
+    rows_out = []
+    for _, g_row_num in gcam_num_scen.iterrows():
+        region = g_row_num["Region"]
+        g_row_den = gcam_den_scen[gcam_den_scen["Region"] == region]
+        if g_row_den.empty:
+            continue
+        g_row_den = g_row_den.iloc[0]
+
+        mlist = members_by_region.get(region, [])
+        region_isos = _region_isos(mlist)
+
+        # 阶段 1
+        L_c_2015: dict[str, float] = {}
+        for iso in region_isos:
+            num_2015 = float(df_num[df_num["iso"] == iso][2015].values[0]) if len(df_num[df_num["iso"] == iso]) > 0 else 0.0
+            den_2015 = float(df_den[df_den["iso"] == iso][2015].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
+            s = num_2015 / den_2015 if den_2015 > 0 else 0.0
+            s = np.clip(s, eps, 1 - eps)
+            L_c_2015[iso] = np.log(s / (1 - s))
+
+        L_R: dict[int, float] = {}
+        for y in YEARS:
+            nr = float(g_row_num.get(y, 0) or 0)
+            dr = float(g_row_den.get(y, 0) or 0)
+            s_r = nr / dr if dr > 0 else 0.0
+            s_r = np.clip(s_r, eps, 1 - eps)
+            L_R[y] = np.log(s_r / (1 - s_r))
+
+        L_R_2015 = L_R.get(2015, 0.0)
+        delta_L_R: dict[int, float] = {y: L_R[y] - L_R_2015 for y in YEARS}
+
+        # 阶段 2：DSCALE 双路径收敛
+        S_proj: dict[str, dict[int, float]] = {}
+        for iso in region_isos:
+            S_proj[iso] = {}
+            L_c = L_c_2015.get(iso, 0.0)
+            for y in YEARS:
+                enshort_L = L_c                        # 保持基年份额
+                enlong_L = L_c + delta_L_R.get(y, 0.0) # 完全跟随区域趋势
+                conv_weight = (y - max_tc) / (2010 - max_tc)
+                conv_weight = np.clip(conv_weight, 0.0, 1.0)
+                L_proj = enshort_L * conv_weight + enlong_L * (1.0 - conv_weight)
+                S_proj[iso][y] = 1.0 / (1.0 + np.exp(-L_proj))
+
+        # 阶段 3
+        for y in YEARS:
+            target = float(g_row_num.get(y, 0) or 0)
+            E_c: dict[str, float] = {}
+            for iso in region_isos:
+                E_c[iso] = float(df_den[df_den["iso"] == iso][y].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
+
+            R_current = {iso: E_c.get(iso, 0.0) * S_proj[iso][y] for iso in region_isos}
+            converged = False
+            for _ in range(max_iter):
+                sum_R = sum(R_current.values())
+                if sum_R < 1e-12:
+                    converged = True
+                    break
+                error = target - sum_R
+                if abs(error) < tol:
+                    converged = True
+                    break
+                k = target / sum_R if sum_R > 0 else 1.0
+                capped_isos: set[str] = set()
+                freed_amount = 0.0
+                for iso in region_isos:
+                    R_temp = R_current[iso] * k
+                    e = E_c.get(iso, 0.0)
+                    if e > 0 and R_temp > e:
+                        R_current[iso] = e
+                        capped_isos.add(iso)
+                        freed_amount += (R_temp - e)
+                    else:
+                        R_current[iso] = R_temp
+                if capped_isos and freed_amount > 0:
+                    uncapped = [iso for iso in region_isos if iso not in capped_isos]
+                    uncapped_sum = sum(R_current[iso] for iso in uncapped)
+                    if uncapped_sum > 0 and len(uncapped) > 0:
+                        for iso in uncapped:
+                            R_current[iso] += freed_amount * (R_current[iso] / uncapped_sum)
+            if not converged:
+                import warnings
+                warnings.warn(
+                    f"DSCALE share iteration unconverged for {region} {y} "
+                    f"(error={abs(target - sum(R_current.values())):.2e} after {max_iter} iters)"
+                )
+            for iso in region_isos:
+                e = E_c.get(iso, 0.0)
+                if e > 0:
+                    R_current[iso] = min(R_current[iso], e)
+                    S_proj[iso][y] = R_current[iso] / e
+                else:
+                    S_proj[iso][y] = 0.0
+
+        for iso in region_isos:
+            row = {"Scenario": scenario, "iso": iso,
+                   "Country": "", "Region": region}
+            for y in YEARS:
+                row[y] = round(S_proj[iso][y], 6)
+            rows_out.append(row)
+
+    df_out = pd.DataFrame(rows_out)
     iso_country = df_num.set_index("iso")["Country"].to_dict()
     df_out["Country"] = df_out["iso"].map(iso_country).fillna("")
     return df_out

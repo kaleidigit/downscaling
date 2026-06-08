@@ -310,38 +310,51 @@ SDG1 输出为 160 行（不同的国家覆盖范围），CSV 格式。
 
 ### 方案 A：Kaya 收敛法（kaya）
 
-**文献**：van Vuuren et al. 2007; Gidden et al. 2019
+**文献基础**：Kaya 恒等式（Kaya 1995）; van Vuuren et al. 2007（指数收敛降尺度概念）;
+Gütschow et al. 2021（SSP 收敛参数：d=0.01, 收敛年 2150-2300）
+
+> ⚠️ **方法定位**：本方案的数学公式（指数 φ 乘方追踪区域比例变化、γ_c 按人均 GDP 调整、
+> t_c 取 2070-2100）**不同于**文献中 van Vuuren 的指数插值法（`a_c × e^(γ·y) + b_c`，
+> 收敛年份 2150-2300）。这是对 Kaya 恒等式框架下收敛概念的**独立实现**，不宜直接归因于
+> van Vuuren 2007 或 Gidden 2019 的具体算法。在 IAM 降尺度文献中，将按国别调整的
+> 收敛速度（γ_c）与比例跟踪公式（φ 乘方）结合的做法**未见先例**。公式设计理念和参数
+> 选择（γ_c 的 0.3 系数、t_c 的 SSP 映射）为本项目的方法论决策。
+> 文献背景见下文对照表。
 
 **步骤 1**：基年能源强度
 ```
 I_c(2015) = E_c^IEA / G_c(2015)
-I_R(t)   = E_R(t) / G_R(t)        # G_R 从区域 GDP 文件读取
+I_R(t)   = E_R(t) / G_R(t)
 ```
 
-**步骤 2**：条件收敛
+**步骤 2**：条件收敛（原创公式）
 ```
 I_c(t) = I_c(2015) × [I_R(t) / I_R(2015)] ^ φ(c,t)
 φ(c,t) = 1 - exp(-γ_c × (t - 2015) / (t_c - 2015))
 ```
+核心思想：t=2015 时 φ=0，国家 EI 保持基年值；随着 t→t_c，φ→1-exp(-γ_c)，国家 EI
+逐渐追踪区域 EI 的比例变化。完全收敛仅渐进实现（φ→1 当 t→∞）。
 
-**步骤 3**：计算 TFC 初步值
+**对比文献方法**（van Vuuren 2007; Gütschow et al. 2021 ESSD）：
 ```
-E_c_proj(t) = I_c(t) × G_c(t)
+EI_c(y) = a_c × e^(γ·y) + b_c      # 指数插值到固定目标
+γ = ln(0.01) / (y_c - y_h)         # d=0.01: 到收敛年消除 99% 差距
+EI_c(y) = EI_R(y)   for y ≥ y_c    # 收敛年后完全等于区域值
 ```
+| 差异点 | 文献（van Vuuren/Gütschow）| 本实现 |
+|--------|--------------------------|--------|
+| 收敛目标 | 收敛年的固定区域 EI 值 | 逐年变化的区域 EI 比例轨迹 |
+| 收敛年份 | SSP1=2150, SSP2=2200, SSP3/4=2300 | SSP126=2070, SSP245=2085, SSP434/460=2100 |
+| 收敛速度 | d=0.01 固定（99%差距消除）| γ_c 按人均 GDP 逐国调整 |
+| GDP 依赖 | 无（仅用于计算 EI）| γ_c = 1.0 + 0.3×ln(GDP_pcap_c/GDP_pcap_world) |
+| EI 下限 | 无 | max(I_c_t, I_c_2015 × 0.1)（10% 基年值）|
 
-**步骤 4**：区域守恒校准
-```
-E_c_final(t) = [E_c_proj(t) / Σ_k E_k_proj(t)] × E_R(t)    # k ∈ region R
-```
+**步骤 3-4**：同前。
 
-**参数**：
-| 参数 | 值 | 来源 |
-|------|---|------|
-| γ_c | `1.0 + 0.3 × log(GDP_pcap_c / GDP_pcap_world)`（人均 GDP 比值）| van Vuuren 2007 框架，0.3 系数为校准值，**未在文献中找到确切出处** |
-| t_c | SSP126=2070, SSP245=2085, SSP434=2100, SSP460=2100 | 合理推断，与 SSP 叙事一致但**非文献指定值** |
-
-> ⚠️ γ_c 中的 0.3 系数和 t_c 收敛年份为项目内部校准参数，非来自原始文献的默认值。
-> 建议在论文中标注为"校准参数"并进行敏感性分析（如 γ_c 取 0.1/0.3/0.5，t_c ±10 年）。
+> **份额指标扩展**：对于份额类指标（fossil_share, renewable_share 等），Kaya 方法
+> 将上述 φ(t) 收敛权重应用于 Logit 变换空间：`L_c(t) = L_c(2015) + φ(t) × ΔL_R(t)`，
+> 然后 sigmoid 逆变换。这保留了逐国收敛速度差异，同时天然保证份额 ∈ [0,1]。
+> 实现见 `compute_kaya_share()`。
 
 ---
 
@@ -407,13 +420,25 @@ MAX_TC 通过 `fun_max_tc()` 动态计算（2040-2200），基于 ENSHORT 回归
 | β 指数 | `clip(β, 1, ∞)`（优先 ENSHORT β，回退 ENLONG β；负 β→1）|
 | 收敛方向 | ENSHORT → ENLONG（近期ENSHORT主导，远期ENLONG主导）|
 
+> **份额指标扩展**：对于份额类指标，DSCALE 方法将 MAX_TC 收敛权重应用于 Logit 空间：
+> ENSHORT = L_c(2015)，ENLONG = L_c(2015) + ΔL_R(t)，通过 CONV_WEIGHT 混合。
+> 实现见 `compute_dscale_share()`。
+
 ---
 
 ### 方案 C：Logit/比例法（logit）
 
-**文献**：当前项目；Marchetti & Nakicenovic 1979（份额指标引用）
+**文献**：Marchetti & Nakicenovic 1979（Fisher-Pry 变换：L = ln(S/(1-S))，用于
+**时间**维度的技术替代建模）; 本项目（将 Logit 变换应用于**空间**维度的区域→国家
+降尺度，在 IAM 降尺度文献中未见先例）。
 
-TFC 为无界变量，本方案使用简单比例分配（与 `code/downscale_tfc_country_from_gcam.py` 一致）；Logit 演变仅用于后续份额类指标。
+TFC 为无界变量，本方案使用简单比例分配；份额类指标（化石份额、可再生份额、电气化率等）
+使用三阶段 Logit 空间降尺度：Logit 变换 → 叠加区域 ΔL → 逆变换 + 迭代封顶缩放。
+此方法在 `archive/old_docs/logit降尺度方案.md` 中详细说明。
+
+对于 Kaya 和 DSCALE 方法，份额指标采用相同的 Logit 变换框架但用各自收敛权重（φ_Kaya、
+CONV_WEIGHT_DSCALE）替换阶段 2 的完整 ΔL 叠加，保留方法间收敛动力学的差异同时确保
+份额有界 ∈ [0,1]。
 
 **步骤 1**：2015 权重
 ```
@@ -575,9 +600,11 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 ## 十、参考文献
 
 ### 方案 A
-1. **van Vuuren, D.P., de Vries, B., Beusen, A. & Heuberger, P.** (2007). "Stabilizing greenhouse gas concentrations at low levels: an assessment of reduction strategies and costs." *Climatic Change*, 81(2), 119–159. DOI: 10.1007/s10584-006-9122-6
-2. **Gidden, M.J., Riahi, K., Smith, S.J., Fujimori, S., Luderer, G., Krey, V., ... & Zwaan, B.** (2019). "Global emissions pathways under different socioeconomic scenarios for use in CMIP6." *Geoscientific Model Development*, 12(4), 1443–1475. DOI: 10.5194/gmd-12-1443-2019
-3. **Kaya, Y.** (1995). "Impact of carbon dioxide emission control on GNP growth." *IPCC Energy and Industry Subgroup*, Paris.
+1. **van Vuuren, D.P., Lucas, P.L. & Hilderink, H.** (2007). "Downscaling drivers of global environmental change: Enabling use of global SRES scenarios at the national and grid levels." *Global Environmental Change*, 17(1), 114–130. DOI: 10.1016/j.gloenvcha.2006.04.004  — 原始指数收敛降尺度方法（`EI_c = a_c×e^(γ·y) + b_c`, d=0.01）
+2. **van Vuuren, D.P., de Vries, B., Beusen, A. & Heuberger, P.** (2007). "Stabilizing greenhouse gas concentrations at low levels: an assessment of reduction strategies and costs." *Climatic Change*, 81(2), 119–159. DOI: 10.1007/s10584-006-9122-6  — 稳定化情景（收敛方法应用场景）
+3. **Gidden, M.J., Riahi, K., Smith, S.J., Fujimori, S., Luderer, G., Krey, V., ... & Zwaan, B.** (2019). "Global emissions pathways under different socioeconomic scenarios for use in CMIP6." *Geoscientific Model Development*, 12(4), 1443–1475. DOI: 10.5194/gmd-12-1443-2019  — CMIP6 排放数据集（使用 `iiasa/emissions_downscaling` 包实现 van Vuuren 方法）
+4. **Gütschow, J., Jeffery, M.L., Günther, A. & Gieseke, R.** (2021). "Country-level greenhouse gas emissions pathways derived from the RCP and SSP scenarios." *Earth System Science Data*, 13(3), 1005–1040. DOI: 10.5194/essd-13-1005-2021  — SSP 收敛参数权威来源（d=0.01, 收敛年 2150–2300）
+5. **Kaya, Y.** (1995). "Impact of carbon dioxide emission control on GNP growth." *IPCC Energy and Industry Subgroup*, Paris.
 
 ### 方案 B
 4. **Sferra, F., van Ruijven, B., Riahi, K., Hackstock, P., Maczek, F., Kikstra, J.S. & Haas, R.** (2026). "DSCALE v0.1 — an open-source algorithm for downscaling regional and global mitigation pathways to the country level." *Geoscientific Model Development*, 19(8), 3157–3197. DOI: 10.5194/gmd-19-3157-2026
@@ -585,7 +612,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 
 ### 方案 C
 6. **Marchetti, C. & Nakicenovic, N.** (1979). "The dynamics of energy systems and the logistic substitution model." *IIASA Research Report RR-79-013*.
-7. **Grubler, A.** (1991). "From global energy futures to CO2 emission profiles." *Energy*, 16(11–12), 1385–1403.
+7. **Grubler, A. & Fujii, Y.** (1991). "Inter-generational and spatial equity issues of carbon accounts." *Energy*, 16(11–12), 1397–1416.  (注：非降尺度方法论文，仅提供排放配额空间公平背景)
 
 ### 数据与情景框架
 8. **Riahi, K., van Vuuren, D.P., Kriegler, E., Edmonds, J., O'Neill, B.C., ... & Luderer, G.** (2017). "The Shared Socioeconomic Pathways and their energy, land use, and greenhouse gas emissions implications." *Global Environmental Change*, 42, 153–168. DOI: 10.1016/j.gloenvcha.2016.05.009

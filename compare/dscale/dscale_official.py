@@ -146,12 +146,17 @@ def fit_enlong_official(
     gcam_tfc: pd.Series,   # 区域 TFC (index=年份)
     gcam_gdp: pd.Series,   # 区域 GDP
     gcam_pop: pd.Series,   # 区域人口
+    base_year: int = 2015, # alpha 调和基准年（官方=2010，本实现=2015）
 ) -> LogLogFunc:
     """
     使用官方 fit_funcs.LogLogFunc 对单个 GCAM 区域拟合 log-log 回归。
 
     回归方程（官方）:
         log(TFC/GDP) = α + β × log(GDP/POP)
+
+    拟合后进行 alpha 调和（官方 enlong_calc_2021:22944 fun_harmonize_alpha）：
+        α += log(EI_base) - (α + β × log(GDP_pcap_base))
+    确保回归线精确通过基准年观测值。
 
     返回拟合好的 LogLogFunc 实例，可直接调用 .predict_y(x) 进行预测。
     """
@@ -160,7 +165,7 @@ def fit_enlong_official(
 
     mask = (gdp_pcap > 0) & (ei > 0)
     if mask.sum() < 3:
-        ff = LogLogFunc(alpha=0.0, beta=1.0)  # beta=1: clip(1,∞)=1, convergence is linear
+        ff = LogLogFunc(alpha=0.0, beta=1.0)
         ff.r_squared = 0.0
         return ff
 
@@ -169,6 +174,22 @@ def fit_enlong_official(
 
     ff = LogLogFunc()
     ff.fit(pd.Series(x), pd.Series(y))
+
+    # ── ENLONG alpha 调和（官方 fun_harmonize_alpha, utils.py:24672）──
+    # α += log(y_base) - (α + β × log(x_base))
+    # 官方基准年=2010，本实现用 2015 以对齐 IEA 基年
+    base_mask = mask & (gcam_gdp.index == base_year) & (gcam_pop.index == base_year)
+    if base_mask.any() and ff.r_squared and ff.r_squared > 0:
+        idx = gcam_gdp.index[base_mask][0]
+        ei_base = ei[idx]
+        gdp_pcap_base = gdp_pcap[idx]
+        if ei_base > 0 and gdp_pcap_base > 0:
+            ly_base = np.log(float(ei_base))
+            lx_base = np.log(float(gdp_pcap_base))
+            alpha_raw = ff.alpha or 0.0
+            beta_val = ff.beta or 0.0
+            ff.alpha = alpha_raw + ly_base - (alpha_raw + beta_val * lx_base)
+
     return ff
 
 

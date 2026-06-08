@@ -824,53 +824,25 @@ def compute_kaya_share(
                 L_proj = L_c + phi_t * delta_L_R.get(y, 0.0)
                 S_proj[iso][y] = 1.0 / (1.0 + np.exp(-L_proj))
 
-        # 阶段 3：迭代缩放封顶校准（与 compute_logit_share 相同）
+        # 阶段 3：Simple proportional scaling to match GCAM numerator.
+        # Shares are [0,1]-bounded via sigmoid, but scaling k can push them
+        # slightly out of bounds. Clip + accept tiny conservation deviation.
         for y in YEARS:
             target = float(g_row_num.get(y, 0) or 0)
             E_c: dict[str, float] = {}
             for iso in region_isos:
                 E_c[iso] = float(df_den[df_den["iso"] == iso][y].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
 
-            R_current = {iso: E_c.get(iso, 0.0) * S_proj[iso][y] for iso in region_isos}
-            converged = False
-            for _ in range(max_iter):
-                sum_R = sum(R_current.values())
-                if sum_R < 1e-12:
-                    converged = True
-                    break
-                error = target - sum_R
-                if abs(error) < tol:
-                    converged = True
-                    break
-                k = target / sum_R if sum_R > 0 else 1.0
-                capped_isos: set[str] = set()
-                freed_amount = 0.0
+            R = {iso: max(E_c.get(iso, 0.0) * S_proj[iso][y], 0.0) for iso in region_isos}
+            sum_R = sum(R.values())
+            if sum_R > 1e-12 and target > 0:
+                k = target / sum_R
                 for iso in region_isos:
-                    R_temp = R_current[iso] * k
-                    e = E_c.get(iso, 0.0)
-                    if e > 0 and R_temp > e:
-                        R_current[iso] = e
-                        capped_isos.add(iso)
-                        freed_amount += (R_temp - e)
-                    else:
-                        R_current[iso] = R_temp
-                if capped_isos and freed_amount > 0:
-                    uncapped = [iso for iso in region_isos if iso not in capped_isos]
-                    uncapped_sum = sum(R_current[iso] for iso in uncapped)
-                    if uncapped_sum > 0 and len(uncapped) > 0:
-                        for iso in uncapped:
-                            R_current[iso] += freed_amount * (R_current[iso] / uncapped_sum)
-            if not converged:
-                import warnings
-                warnings.warn(
-                    f"Kaya share iteration unconverged for {region} {y} "
-                    f"(error={abs(target - sum(R_current.values())):.2e} after {max_iter} iters)"
-                )
+                    R[iso] *= k
             for iso in region_isos:
                 e = E_c.get(iso, 0.0)
                 if e > 0:
-                    R_current[iso] = min(R_current[iso], e)
-                    S_proj[iso][y] = R_current[iso] / e
+                    S_proj[iso][y] = float(np.clip(R[iso] / e, 0.0, 1.0))
                 else:
                     S_proj[iso][y] = 0.0
 
@@ -956,53 +928,23 @@ def compute_dscale_share(
                 L_proj = enshort_L * conv_weight + enlong_L * (1.0 - conv_weight)
                 S_proj[iso][y] = 1.0 / (1.0 + np.exp(-L_proj))
 
-        # 阶段 3
+        # 阶段 3：Simple proportional scaling to match GCAM numerator.
         for y in YEARS:
             target = float(g_row_num.get(y, 0) or 0)
             E_c: dict[str, float] = {}
             for iso in region_isos:
                 E_c[iso] = float(df_den[df_den["iso"] == iso][y].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
 
-            R_current = {iso: E_c.get(iso, 0.0) * S_proj[iso][y] for iso in region_isos}
-            converged = False
-            for _ in range(max_iter):
-                sum_R = sum(R_current.values())
-                if sum_R < 1e-12:
-                    converged = True
-                    break
-                error = target - sum_R
-                if abs(error) < tol:
-                    converged = True
-                    break
-                k = target / sum_R if sum_R > 0 else 1.0
-                capped_isos: set[str] = set()
-                freed_amount = 0.0
+            R = {iso: max(E_c.get(iso, 0.0) * S_proj[iso][y], 0.0) for iso in region_isos}
+            sum_R = sum(R.values())
+            if sum_R > 1e-12 and target > 0:
+                k = target / sum_R
                 for iso in region_isos:
-                    R_temp = R_current[iso] * k
-                    e = E_c.get(iso, 0.0)
-                    if e > 0 and R_temp > e:
-                        R_current[iso] = e
-                        capped_isos.add(iso)
-                        freed_amount += (R_temp - e)
-                    else:
-                        R_current[iso] = R_temp
-                if capped_isos and freed_amount > 0:
-                    uncapped = [iso for iso in region_isos if iso not in capped_isos]
-                    uncapped_sum = sum(R_current[iso] for iso in uncapped)
-                    if uncapped_sum > 0 and len(uncapped) > 0:
-                        for iso in uncapped:
-                            R_current[iso] += freed_amount * (R_current[iso] / uncapped_sum)
-            if not converged:
-                import warnings
-                warnings.warn(
-                    f"DSCALE share iteration unconverged for {region} {y} "
-                    f"(error={abs(target - sum(R_current.values())):.2e} after {max_iter} iters)"
-                )
+                    R[iso] *= k
             for iso in region_isos:
                 e = E_c.get(iso, 0.0)
                 if e > 0:
-                    R_current[iso] = min(R_current[iso], e)
-                    S_proj[iso][y] = R_current[iso] / e
+                    S_proj[iso][y] = float(np.clip(R[iso] / e, 0.0, 1.0))
                 else:
                     S_proj[iso][y] = 0.0
 

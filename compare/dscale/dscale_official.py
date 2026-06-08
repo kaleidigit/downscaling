@@ -272,7 +272,10 @@ def fit_enshort_countries(
         x_arr = np.array(x_vals, dtype=float)
         y_arr = np.array(y_vals, dtype=float)
         ff = LogLogFunc()
-        ff.fit(pd.Series(x_arr), pd.Series(y_arr))
+        try:
+            ff.fit(pd.Series(x_arr), pd.Series(y_arr))
+        except (ValueError, RuntimeError):
+            continue  # 无法回归（零方差等），跳过该国
 
         # ── A2: alpha 调和 (官方 fun_harmonize_alpha, utils.py:24672) ──
         # alpha += log(y_base) - (alpha + beta * log(x_base))

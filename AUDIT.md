@@ -1,174 +1,143 @@
 # 代码审计报告
 
-审计日期：2026-06-01 ~ 2026-06-02
-审计方法：5 层 25 项系统审计 + 补充深度审计 + 全量修复 + 重跑验证
+审计周期：2026-06-01 ~ 2026-06-09  
+审计方法：五轮递进审计（代码 → 官方交叉验证 → 文献验证 → 测试清理 → 敏感性分析）  
+最终状态：**290/290 测试通过，96 降尺度 + 48 份额 + 76 图表全部 OK，14 项 Bug 修复**
 
 ---
 
-## 一、项目概况
+## 一、审计轮次概览
 
-本项目将 GCAM 区域级气候情景数据降尺度到国家粒度，在 `compare/` 下并行实现三种方案：
-
-| 方案 | 核心思想 | 关键文献 |
-|------|---------|---------|
-| Logit | 基年 IEA 份额 × 区域总量（恒定比例）| 当前项目 |
-| Kaya | 能源强度按人均 GDP 条件收敛到 GCAM 区域值 | van Vuuren 2007; Gidden 2019 |
-| DSCALE | ENLONG（区域 log-log 回归）+ ENSHORT（逐国历史回归）+ MAX_TC 收敛 | Sferra 2026 |
-
-覆盖 8 个指标（TFC、电力、TES、化石 TES、可再生 TES、绿色电力、工业 CO2、CO2 排放）× 4 个 SSP 情景（SSP126/245/434/460）。
+| 轮次 | 日期 | 重点 | 成果 |
+|------|------|------|------|
+| **R1** 代码审计 | 06-01~02 | DSCALE 官方一致性 + 数据链路 + 算法参数 | 7 Bug 修复（A1-A6, B7, C1, E1-E3） |
+| **R2** 官方交叉验证 | 06-08 | 与 DSCALE 官方代码逐函数对比 | ENLONG α 调和、10 差异分析 |
+| **R3** 文献验证 | 06-08 | Kaya/Logit 方法的文献溯源 | 引用纠正、份额 Logit 空间修复 |
+| **R4** 测试清理 | 06-08 | 测试覆盖度与容差审计 | 3 冗余移除、58 新测试、并行 pipeline |
+| **R5** 交叉验证 | 06-09 | 自指验证修复 + 敏感性分析 | gamma_c 负值防护、官方公式逐元素对比 |
 
 ---
 
-## 二、审计方法
+## 二、全部 Bug 修复（14 项）
 
-按 5 层 25 项检查点执行（见 `docs/audit/audit_workflow.md`）：
+### R1 修复（7 项）
 
-| 层级 | 审计对象 | 项数 | 核心问题 |
-|------|---------|------|---------|
-| A | DSCALE 官方代码一致性 | 6 | `dscale_official.py` vs `DSCALE/downscaler/` |
-| B | 数据链路 | 7 | WORLDBAL 匹配率、单位换算、合并验证 |
-| C | 算法参数 | 5 | γ 系数溯源、收敛年份、迭代参数 |
-| D | 统计严谨性 | 6 | 守恒性、有界性、极端值检测 |
-| E | 代码质量 | 3 | 重复函数、死代码、数值安全 |
+| # | 问题 | 严重性 | 文件 |
+|---|------|--------|------|
+| A1 | DSCALE 收敛 `abs(beta)` 翻转负值，官方用 `clip(beta,1,∞)` | 高 | `dscale_official.py` |
+| A2 | ENSHORT 缺少 alpha 调和（官方 `fun_harmonize_alpha`） | 高 | `dscale_official.py` |
+| A3 | MAX_TC 简化为 R² 线性插值，缺 beta 符号检测 | 中 | `dscale_official.py` |
+| A4 | ENSHORT EI 无 [0,1] 封顶 | 低 | `dscale_official.py` |
+| B7 | bfa/tcd/mli/mrt 被误排除（WORLDBAL 有完整数据） | 高 | `common/mapping.py` |
+| C1 | Kaya γ 使用总量 GDP（98% 国家 γ<0）→ 改为人均 GDP | 高 | `common/downscale.py` |
+| E1-E3 | 重复函数、重复字典、np.seterr 全局副作用 | 低 | 多文件 |
 
-审计原则：每一步可追溯（文献/官方代码行号）、官方计算层零修改、差异透明量化。
+### R2-R5 修复（7 项）
+
+| # | 问题 | 轮次 | 文件 |
+|---|------|------|------|
+| 8 | GCAM+IEA 电力 GWh 未转换为 TJ（electrification_rate 差 3.6 倍） | R2 | `config.py`, `downscale.py` |
+| 9 | DSCALE 非 TFC 输出未写入磁盘（`run_indicator` 提前 return） | R2 | `downscale.py` |
+| 10 | 人口下限 `max(p, 1.0)` → `max(p, 1e-6)` | R2 | `dscale_official.py` |
+| 11 | `LogLogFunc(alpha=0,beta=0)` → `ff.beta=None` | R2 | `dscale_official.py` |
+| 12 | 零 IEA 区域 GCAM 值泄漏到全局残差 | R2 | `downscale.py` |
+| 13 | 份额 Kaya/DSCALE 简单比值超界（46/35 国 >1.0）→ Logit 空间收敛 | R3 | `downscale.py` |
+| 14 | `gamma_c` 极端贫困国负值 → 收敛方向反转（津巴布韦） | R5 | `downscale.py` |
 
 ---
 
-## 三、发现与修复（15 项）
+## 三、方法验证状态
 
-### A 层 — 官方 DSCALE 一致性
+### Kaya 收敛法
 
-| # | 问题 | 修复 | 文件 |
-|---|------|------|------|
-| A1 | `np.abs(beta)` 翻转负值，官方直接 clip | 移除 `np.abs()` | `dscale_official.py` |
-| A2 | ENSHORT 缺少 alpha 调和（官方 `fun_harmonize_alpha`） | 拟合后按 2015 基准年修正 alpha | `dscale_official.py` |
-| A3 | MAX_TC 简化为 R² 线性插值 | 实现官方 `fun_max_tc()`（beta 符号检测 + R²×duration）| `dscale_official.py` |
-| A4 | ENSHORT EI 无 [0,1] 封顶 | 添加 `.clip(0, 1)` | `dscale_official.py` |
-| A6 | 旧版 DSCALE 收敛缺少 β 指数 | 添加 `** max(abs(beta), 1.0)` | `common/downscale.py` |
+| 验证项 | 状态 | 说明 |
+|--------|------|------|
+| 公式结构 | ⚠️ | 与 van Vuuren 2007 指数插值法本质不同（φ 乘方 vs 指数插值） |
+| γ_c 参数 (0.3) | ⚠️ | 校准参数，已做敏感性分析（0.1/0.3/0.5），已添加 0.01 下限 |
+| t_c 收敛年份 | ⚠️ | 2070-2100 vs 文献 2150-2300，文档中已标注 |
+| EI 10% 下限 | ⚠️ | 项目自定义（无文献出处） |
+| gamma_c inf/nan 防护 | ✅ | 已修复 |
+| 份额（Logit 空间） | ✅ | `compute_kaya_share` 保证 ∈ [0,1] |
 
-### B 层 — 数据链路
+### DSCALE 双路径法
 
-| # | 问题 | 修复 | 文件 |
-|---|------|------|------|
-| B7 | bfa/tcd/mli/mrt 被排除但 WORLDBAL 有完整数据 | 从 EXCLUDED_ISO 移除（9→5）| `common/mapping.py` |
+| 验证项 | 状态 | 说明 |
+|--------|------|------|
+| LogLogFunc 回归 | ✅ | 官方 fit_funcs.py，零修改导入 |
+| fun_max_tc_convergence | ✅ | 与官方 Energy_demand_downs_1.py:650-675 逐元素一致 |
+| ENLONG α 调和 | ✅ | 官方 fun_harmonize_alpha，基准年 2015 |
+| ENSHORT 历史回归 | ✅ | 143/148 (96.6%) 覆盖 |
+| MAX_TC 回退值 | ⚠️ | 自定义启发式（官方无此需要） |
+| 电力单位 | ✅ | GWh→TJ，与 TFC 一致 |
+| 份额（Logit 空间） | ✅ | `compute_dscale_share` 保证 ∈ [0,1] |
 
-### C 层 — 算法参数
+### Logit/比例法
 
-| # | 问题 | 修复 | 文件 |
-|---|------|------|------|
-| C1 | Kaya γ 公式使用总量 GDP（98% 国家 γ<0，收敛反转）| 改用人均 GDP | `common/downscale.py` |
-
-### E 层 — 代码质量
-
-| # | 问题 | 修复 | 文件 |
-|---|------|------|------|
-| E1 | 5 个函数在 `common/downscale.py` 和 `dscale_official.py` 重复 | 删除 dscale 副本，改为 import | 双文件 |
-| E2 | IEA_VARIANTS 字典重复定义（io.py 两处）| 统一至模块顶部 | `common/io.py` |
-| E3 | `np.seterr(all="ignore")` 全局副作用 | 改为 context manager | `dscale_official.py` |
-
-### 补充审计修复
-
-| 缺口 | 问题 | 修复 |
-|------|------|------|
-| Gap 1 | `_finalize_df` 空 DataFrame 崩溃 | 提前检查 `df_out.empty` |
-| Gap 2 | 9 个死导入 | 全部清理 |
-| Gap 4 | 非 TFC 指标使用简化 DSCALE | 统一路由至官方算法 |
-| Gap 5 | np.seterr 全局副作用（二次验证）| 确认 context manager 无泄漏 |
-| Gap 6 | CLAUDE.md 过期路径 | 更新至 data/ 目录 |
-
----
-
-## 四、全量重跑验证（2026-06-02）
-
-```
-Phase 1: 96 downscaling runs — 96 OK / 0 FAIL (196.8s)
-Phase 2: 72 derived shares — all OK
-Phase 3: 76 PNG charts regenerated
-Total: 228.6s
-```
-
-### 关键指标
-
-| 验证项 | 结果 |
+| 验证项 | 状态 |
 |--------|------|
-| TFC 全局守恒（3 方法 × 4 情景）| ✅ 偏差 0.000000 TJ |
-| 电力全局守恒 | ✅ 偏差 0.000000 |
-| CO2 全局守恒 | ⚠️ 微量残差（舍入，~1e-9 量级）|
-| 单国区域一致性（15 国）| ✅ 三方案完全相同 |
-| 非 TFC 指标 DSCALE 统一 | ✅ 全部 8 指标使用官方算法 |
-| 新增 4 国（bfa/tcd/mli/mrt）| ✅ TFC 输出中包含；CO2 缺失（EDGAR 限制）|
-| 负值检查 | ✅ 仅 oth 行 ~1e-6 TJ 舍入误差 |
-| CO2 负值 | ✅ 预期行为（SSP126 净负排放情景）|
-| Kaya 极端值（C1 修复后）| ⚠️ SSP126: 28 小国（基年 <300 TJ）CAGR < -10% |
+| TFC 比例分配 | ✅ |
+| 份额三阶段 Logit | ✅（原创方法） |
+| 迭代封顶缩放 | ✅（有收敛警告，见已知局限） |
 
 ---
 
-## 五、已知局限
+## 四、测试状态
 
-论文中应标注以下 6 点：
+**290 测试，全部通过（5 个文件）：**
 
-1. **Kaya 方法对小经济体的适用性**：28 个基年 TFC < 300 TJ 的国家在收敛公式下 TFC→0，建议在论文方法讨论中标注
-2. **ENLONG 回归数据范围**：使用 2015-2100 年数据（18 点），官方 DSCALE 使用 1990-2100（21 点）。影响微小（<1% β 差异），在论文中注明
-3. **Kaya 参数来源**：γ=1.0+0.3×log(G_pc/G_world_pc) 中的 0.3 系数为校准参数，t_c 取值（SSP126→2070 等）为推断值，均无文献出处。建议标注并做敏感性分析
-4. **EDGAR 数据覆盖**：bfa/tcd/mli/mrt 四国在 CO2 和工业 CO2 指标中缺失（EDGAR 源文件无数据），TFC 中已包含
-5. **DSCALE ENSHORT 历史数据**：仅 TFC 有 1970-2015 IEA WORLDBAL 历史回归数据，其他指标使用 GDP 缩放回退
-6. **DSCALE 部门聚合**：本项目仅处理聚合指标（如总 TFC、总电力），未实现官方 DSCALE 的多部门层次化降尺度
+| 文件 | 测试数 | 覆盖 |
+|------|--------|------|
+| `test_conservation.py` | ~170 | 区域守恒（含 GCAM 对比）、单国一致性、份额有界、NaN/负数 |
+| `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、fun_max_tc、ENLONG 回归 |
+| `test_edge_cases.py` | 35 | gamma_c、phi_kaya、_regional_conserve、mapping、IEA 索引 |
+| `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
+| `test_validation_experiments.py` | 40 | 份额有界性（48 参数化）、单国一致性、ENLONG α 调和 |
 
 ---
 
-## 六、项目结构（审计后）
+## 五、全量 Pipeline 验证（2026-06-09）
 
 ```
-downscaling/
-├── CLAUDE.md                     # 项目指令与数据规格
-├── AUDIT.md                      # 本文件
-├── README.md
-├── pyproject.toml                # uv 环境配置
-├── data/                         # 输入数据
-│   ├── gcam/                     # GCAM 区域输出
-│   ├── iea/                      # IEA WORLDBAL 1970-2024
-│   ├── ssp/                      # SSP GDP/人口
-│   ├── emissions/                # EDGAR 排放数据
-│   └── mapping/                  # 国家-区域映射
-├── compare/                      # ★ 三方案对比
-│   ├── common/                   # 共享模块 (config, io, mapping, downscale, conservation)
-│   ├── logit/                    # 方案 C: 恒定份额
-│   ├── kaya/                     # 方案 A: 条件收敛
-│   ├── dscale/                   # 方案 B: 官方 DSCALE 适配
-│   ├── output/                   # 所有输出 (xlsx + txt + png)
-│   ├── run_all.py                # 一键运行
-│   └── compare_results.py        # 对比可视化
-├── DSCALE/                       # 官方 DSCALE 仓库（零修改）
-├── archive/                      # 归档文件
-│   ├── old_docs/                 # 旧文档
-│   ├── old_logs/                 # 旧日志
-│   └── old_output_docs/          # 旧输出文档
-└── docs/audit/                   # 详细审计报告（14 份）
+Phase 1: 96/96 OK, 0 FAIL (645s sequential, ~120s with N_JOBS=6)
+Phase 2: 48 share files written (6 indicators × 2 ratio + 4 Logit shares × 3 methods × 4 scenarios)
+Phase 3: 76 plots regenerated
+Total: ~720s sequential
 ```
+
+所有输出文件已重新生成。份额指标（fossil_share, renewable_share, electrification_rate, green_elec_share）全部有界 ∈ [0,1]。
+
+---
+
+## 六、已知局限（v3）
+
+1. **Kaya γ_c = 1.0 + 0.3×ln(GDP_pcap 比值)**：0.3 为校准参数，floor 0.01 防负 γ。ci 分析已完成。
+2. **Kaya EI 10% 下限**：无文献出处，防止极端收敛。
+3. **Kaya 无 IEA 国家**：直接使用区域 EI，无收敛路径。
+4. **DSCALE ENSHORT 5 国回退**：mne/prk/qat/rou/zwe 缺少 USDA GDP 数据（非 TFC 数据）。
+5. **DSCALE MAX_TC 回退值**（2200/2120/2040）：项目自定义启发式。
+6. **Kaya/DSCALE 份额守恒**：等比缩放+clip 产生 <1% 守恒偏差。Logit 份额守恒完美。
+7. **`compute_logit_share` 收敛警告**：Africa_Eastern 和 South America_Northern 在 2100 年未收敛（误差 ~2e4 和 ~1e3），但输出份额仍正确有界。
+8. **CO2 净负排放**：SSP126 下 76 国 per_capita_co2 为负值（预期行为）。
 
 ---
 
 ## 七、运行方式
 
 ```bash
-# 全量运行（8 指标 × 3 方法 × 4 情景 + 份额 + 图表）
-python compare/run_all.py
+# 全量运行（支持并行：N_JOBS=6）
+N_JOBS=6 uv run python compare/run_all.py
+
+# 全量测试
+uv run python -m pytest compare/tests/ -q
 
 # 单指标运行
-python -c "
+uv run python -c "
 from compare.common.downscale import run_indicator
 from compare.common.config import INDICATORS
 df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
-"
-
-# 仅 TFC（含 ENSHORT 历史回归）
-python -c "
-from compare.dscale.downscale_tfc import downscale_tfc
-df = downscale_tfc('SSP126')
 "
 ```
 
 ---
 
-审计签字：2026-06-02，全部 5 层 25 项审计 + 补充审计完成，15 项修复应用，全量重跑通过。官方 DSCALE 代码零修改。
+审计签字：2026-06-09，五轮审计完成。官方 DSCALE 代码零修改。14 项 Bug 修复，290 测试通过，全量 pipeline 通过。

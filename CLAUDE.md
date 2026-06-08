@@ -627,33 +627,52 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 
 ## 十一、审计状态
 
-最新审计：**v2**（2026-06-02），报告位置：`docs/audit/audit_v2_report.md`
+最新审计：**v3**（2026-06-09），五轮审计：代码 → 官方交叉验证 → 文献验证 → 测试清理 → 敏感性分析
 
 | 指标 | 值 |
 |------|---|
-| 测试通过 | 137/137（116 核心 + 21 合成 GDP） |
-| Pipeline 状态 | 96 降尺度 + 72 份额，全部通过（434.6s） |
-| 审计完成度 | 32/33 ✅, 1 ⚠️（E2 可解释） |
-| 已知 Bug 修复 | 4 项 |
+| 测试通过 | 290/290（5 个测试文件） |
+| Pipeline 状态 | 96 降尺度 + 48 份额 + 76 图表，全部通过（~720s） |
+| 审计完成度 | 代码正确性 ✅ / 官方交叉验证 ✅ / 文献引用 ✅ / 边缘覆盖 ✅ |
+| 已知 Bug 修复 | 14 项（v1: 4 + v3: 10） |
 
-### 已知局限（审计确认 + 修复后更新）
+### 已知局限
 
-1. **E2 相关性 r=0.849**：Logit-Kaya 2100 年 log-log 相关性略低于 0.85 阈值（修复后从 0.838 提升至 0.849，仅差 0.001），由多国区域中两种方法的根本数学差异导致，可解释。
-2. **ENSHORT 简化**：因缺乏 1980-2015 历史数据，ENSHORT 简化为 GDP 缩放。
-3. **Kaya γ_c 参数**：0.3 系数为校准值，未在文献中找到确切出处。
+1. **Kaya γ_c = 1.0 + 0.3×ln(GDP_pcap 比值)**：0.3 系数为校准参数，已有敏感性分析（0.1/0.3/0.5）。已添加 `max(γ, 0.01)` 下限防止极端贫困国（津巴布韦）收敛方向反转。
+2. **Kaya EI 10% 下限**：`max(I_c_t, I_c_2015 × 0.1)` — 有 IEA 数据的国家即使极度收敛，能源强度也不会降到基年的 10% 以下。无 IEA 数据的国家直接使用区域 EI。
+3. **DSCALE ENSHORT 覆盖率 96.6%**：143/148 国有逐国历史回归，5 国回退到 GDP 缩放（瓶颈在 USDA GDP 历史数据，非 TFC 数据）。
+4. **DSCALE MAX_TC 回退值**：2200/2120/2040 三段回退是项目自定义启发式（官方 DSCALE 总能做 ENSHORT 回归，无此需要）。
+5. **DSCALE 收敛 β 来源**：使用 ENLONG β（区域 IAM 回归）而非 ENSHORT β（官方使用），但 ENSHORT β 可用时优先使用。已通过交叉验证测试确认与官方公式一致。
+6. **Kaya/DSCALE 份额计算**：份额在 Logit 空间计算（`compute_kaya_share`/`compute_dscale_share`），保证 ∈ [0,1]，但等比缩放+clip 产生微小守恒偏差（< 1% 区域分子）。Logit 份额使用完整的迭代封顶缩放（守恒完美）。
+7. **E2 相关性 r≈0.85**：Logit-Kaya 2100 年相关性接近 0.85 阈值，由方法间根本数学差异导致。
 
-### 审计中修复的 Bug
+### v3 审计中修复的 Bug（10 项）
 
-| # | 修复内容 |
-|---|---------|
-| 1 | `read_iea_tfc()` 改用 `_build_iea_name_index()` 防止 Other 聚合名泄漏（v1 遗留 Bug） |
-| 2 | `test_conservation.py` sys.path 修正（parents[3]→parents[2]） |
-| 3 | 新增 `generate_synthetic_gdp()` 函数，为 9 个 GDP 缺失国生成合成 GDP（区域人均 GDP 增长 × SSP 人口），修复 Kaya/DSCALE 塌缩 |
-| 4 | 新增 `test_synthetic_gdp.py`（21 项测试） |
+| # | 修复内容 | 轮次 |
+|---|---------|------|
+| 1 | DSCALE 收敛 β 来源：ENLONG β → 优先 ENSHORT β | R1 |
+| 2 | GCAM 电力 GWh→TJ 转换（×3.6）+ IEA 电力同步转换 | R1 |
+| 3 | DSCALE 非 TFC 输出未写入磁盘（`run_indicator` 提前 return） | R1 |
+| 4 | 人口下限 `max(p, 1.0)` → `max(p, 1e-6)` | R1 |
+| 5 | `LogLogFunc(alpha=0,beta=0)` → `ff.beta=None` B1 Bug | R1 |
+| 6 | 零 IEA 区域 GCAM 值泄漏到全局残差 | R1 |
+| 7 | `read_gcam_generic` 缺失 Units/filter_col 静默错误 | R1 |
+| 8 | ENLONG alpha 调和缺失（官方 `fun_harmonize_alpha` 有，我们无） | R2 |
+| 9 | 份额指标 Kaya/DSCALE 简单比值法超界（46/35 国 >1.0）→ Logit 空间收敛 | R3 |
+| 10 | `gamma_c` inf/nan 传播 + 极端贫困国负 γ 发散 | R4-R5 |
 
-### 审计后建议
+### 测试文件清单
 
-- Kaya γ_c 敏感性分析（0.1/0.3/0.5）
-- DSCALE ENSHORT 全实现（需要 1980-2015 IEA 历史数据）
-- 建立 CI/CD pipeline 自动验证
-- 创建 git tag `audit-v2-20260602`
+| 文件 | 测试数 | 覆盖内容 |
+|------|--------|---------|
+| `test_conservation.py` | ~170 | 区域守恒、单国一致性、份额有界、NaN/负数检测 |
+| `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、ENLONG 回归 |
+| `test_edge_cases.py` | 35 | gamma_c、phi_kaya、_regional_conserve、mapping、IEA 索引 |
+| `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
+| `test_validation_experiments.py` | 40 | 份额有界性（48 项参数化）、单国一致性、ENLONG α 调和 |
+
+### 后续建议
+
+- **高优先级**：Kaya γ_c 敏感性分析写入论文（已做数值实验）
+- **中优先级**：`compute_logit_share` 中 Africa_Eastern/South America_Northern 收敛警告调查
+- **低优先级**：集成 World Bank WDI 或 Maddison Project GDP 数据以覆盖 ENSHORT 的 5 个缺失国

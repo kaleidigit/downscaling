@@ -195,7 +195,9 @@ def gamma_c(gdp_pcap_2015: float, gdp_pcap_world_2015: float) -> float:
           Gidden 2019 标准化为 CMIP6 排放降尺度方法。
     0.3 系数: 项目校准参数，未在文献中找到确切出处。
     """
-    if gdp_pcap_world_2015 <= 0 or gdp_pcap_2015 <= 0:
+    if not np.isfinite(gdp_pcap_world_2015) or gdp_pcap_world_2015 <= 0:
+        return 1.0
+    if not np.isfinite(gdp_pcap_2015) or gdp_pcap_2015 <= 0:
         return 1.0
     return 1.0 + 0.3 * np.log(gdp_pcap_2015 / gdp_pcap_world_2015)
 

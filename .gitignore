@@ -16,3 +16,4 @@ archive/
 
 # Data files (may contain commercial/proprietary data)
 data/
+/compare/output

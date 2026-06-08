@@ -1,5 +1,6 @@
 """一键运行全部 SDG 指标三方案降尺度 + 对比可视化。"""
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -16,6 +17,19 @@ METHODS = ["logit", "kaya", "dscale"]
 UNBOUNDED_KEYS = list(INDICATORS.keys())
 
 
+def _run_one(method, sc, cfg, label):
+    """单个降尺度任务（供 joblib 并行调用）。"""
+    t0 = time.time()
+    try:
+        from compare.common.downscale import run_indicator
+        df = run_indicator(method, sc, cfg)
+        elapsed = time.time() - t0
+        return (label, "OK", len(df), elapsed, None)
+    except Exception as e:
+        elapsed = time.time() - t0
+        return (label, "FAIL", 0, elapsed, str(e))
+
+
 def main():
     start = time.time()
     results: dict[str, dict] = {}
@@ -23,29 +37,48 @@ def main():
     # ═══════════════════════════════════════════
     # Phase 1: 无界量降尺度
     # ═══════════════════════════════════════════
-    n_total = len(UNBOUNDED_KEYS) * len(METHODS) * len(SCENARIOS)
-    print("=" * 70)
-    print(f"Phase 1: Downscaling ({len(UNBOUNDED_KEYS)} indicators × {len(METHODS)} methods × {len(SCENARIOS)} scenarios = {n_total} runs)")
-    print("=" * 70)
-
-    count = 0
+    # 构建任务列表
+    tasks = []
     for key in UNBOUNDED_KEYS:
         cfg = INDICATORS[key]
         for method in METHODS:
             for sc in SCENARIOS:
-                label = f"{method}_{key}_{sc}"
-                t0 = time.time()
-                try:
-                    df = run_indicator(method, sc, cfg)
-                    elapsed = time.time() - t0
-                    results[label] = {"status": "OK", "rows": len(df), "time": elapsed}
-                    count += 1
-                    print(f"  [{count}/{n_total}] {label}: OK ({len(df)} rows, {elapsed:.1f}s)")
-                except Exception as e:
-                    elapsed = time.time() - t0
-                    results[label] = {"status": "FAIL", "error": str(e), "time": elapsed}
-                    count += 1
-                    print(f"  [{count}/{n_total}] {label}: FAIL ({e})")
+                tasks.append((method, sc, cfg, f"{method}_{key}_{sc}"))
+
+    n_total = len(tasks)
+    n_jobs = int(os.environ.get("N_JOBS", "-1"))
+    use_parallel = n_jobs != 0 and len(tasks) > 1
+    print("=" * 70)
+    print(f"Phase 1: Downscaling ({len(UNBOUNDED_KEYS)} indicators × {len(METHODS)} methods × {len(SCENARIOS)} scenarios = {n_total} runs)")
+    if use_parallel:
+        try:
+            from joblib import Parallel, delayed
+            print(f"  Parallel mode: n_jobs={n_jobs}")
+            _runner = Parallel(n_jobs=n_jobs, verbose=10)
+            _results = _runner(delayed(_run_one)(m, s, c, l) for m, s, c, l in tasks)
+            for label, status, rows, elapsed, error in _results:
+                results[label] = {"status": status, "rows": rows, "time": elapsed}
+                if error:
+                    results[label]["error"] = error
+        except ImportError:
+            use_parallel = False
+    if not use_parallel:
+        print("  Sequential mode (set N_JOBS>0 for parallel, e.g. N_JOBS=6)")
+        print("=" * 70)
+        count = 0
+        for method, sc, cfg, label in tasks:
+            t0 = time.time()
+            try:
+                df = run_indicator(method, sc, cfg)
+                elapsed = time.time() - t0
+                results[label] = {"status": "OK", "rows": len(df), "time": elapsed}
+                count += 1
+                print(f"  [{count}/{n_total}] {label}: OK ({len(df)} rows, {elapsed:.1f}s)")
+            except Exception as e:
+                elapsed = time.time() - t0
+                results[label] = {"status": "FAIL", "error": str(e), "time": elapsed}
+                count += 1
+                print(f"  [{count}/{n_total}] {label}: FAIL ({e})")
 
     ok = sum(1 for v in results.values() if v["status"] == "OK")
     fail = sum(1 for v in results.values() if v["status"] == "FAIL")

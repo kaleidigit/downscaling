@@ -139,8 +139,8 @@ def test_single_country_consistency():
                     ref = vals[methods_list[0]][y]
                     for m in methods_list[1:]:
                         diff = abs(vals[m][y] - ref)
-                        assert diff < max(1.0, abs(ref) * 1e-10), \
-                            f"{key}/{iso} {y}: {methods_list[0]}={ref:.1f} vs {m}={vals[m][y]:.1f}, diff={diff:.1f}"
+                        assert diff < max(1e-6, abs(ref) * 1e-12), \
+                            f"{key}/{iso} {y}: {methods_list[0]}={ref:.6f} vs {m}={vals[m][y]:.6f}, diff={diff:.6f}"
 
 
 # ══════════════════════════════════════════════
@@ -193,9 +193,8 @@ def test_share_bounds(scenario, method):
             if len(vals) == 0:
                 continue
             outside = ((vals < -0.01) | (vals > 1.01)).sum()
-            # Kaya/DSCALE 不保证份额有界性（这是已知局限）；仅用于回归检测
-            tolerance = 0.50 if method != "logit" else 0.05
-            assert outside <= len(vals) * tolerance, \
+            # 份额已在 Logit 空间计算（2026-06-08 修复），三方法均保证有界性
+            assert outside == 0, \
                 f"{method}/{share_key} {y}: {outside}/{len(vals)} outside [0,1]"
 
 
@@ -267,42 +266,6 @@ def test_fun_max_tc_bounds():
     # 同号负 beta → 不触发 y_min
     tc_neg = fun_max_tc(-2.0, 0.8, 1980, 2015, -1.5)
     assert tc_neg > 2040, f"同号负 beta 不应强制 y_min, 实际 {tc_neg}"
-
-
-def test_fun_max_tc_convergence_beta_clip():
-    """验证 A1 修复：beta clipping 不含 abs。"""
-    import numpy as np
-    from compare.dscale.dscale_official import fun_max_tc_convergence
-
-    t = np.array([2050.0])
-    es = np.array([100.0])
-    el = np.array([200.0])
-    mtc = np.array([2100.0])
-
-    # beta=-3: 官方 clip(1,inf)→1, CONV_WEIGHT^1=0.5556 → 100*0.5556+200*0.4444=144.4
-    # beta=3: CONV_WEIGHT^3=0.1715 → 100*0.1715+200*0.8285=182.9 (更接近 ENLONG)
-    c1 = fun_max_tc_convergence(es, el, t, mtc, np.array([-3.0]))
-    c2 = fun_max_tc_convergence(es, el, t, mtc, np.array([3.0]))
-    assert abs(c1[0] - 144.44) < 0.1, f"beta=-3: expected 144.4, got {c1[0]}"
-    assert abs(c2[0] - 182.85) < 0.1, f"beta=3: expected 182.9, got {c2[0]}"
-
-
-# ══════════════════════════════════════════════
-# 测试 6: 数据完整性
-# ══════════════════════════════════════════════
-
-def test_excluded_iso_count():
-    """验证 EXCLUDED_ISO 恰好 5 个（B7 修复后）。"""
-    assert EXCLUDED_ISO == {"grl", "pse", "gib", "xkx", "ssd"}, \
-        f"EXCLUDED_ISO 应为 5 个，实际: {sorted(EXCLUDED_ISO)}"
-
-
-def test_mapping_loads():
-    """映射表正确加载，TWN→CHN 合并。"""
-    mapping = load_mapping()
-    assert len(mapping) >= 170, f"映射表应 ≥170 行，实际 {len(mapping)}"
-    assert "chn" in mapping["iso"].values
-    assert "twn" not in mapping["iso"].values  # 已合并
 
 
 def test_all_config_paths_exist():

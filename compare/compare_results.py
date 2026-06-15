@@ -68,18 +68,17 @@ def plot_indicator_dashboard_all_scenarios(indicator_key: str) -> Path | None:
     for idx, sc in enumerate(SCENARIOS):
         ax = axes[idx]
         data = _load(indicator_key, sc)
-        if len(data) < 2:
-            ax.text(0.5, 0.5, "insufficient data", ha="center", va="center",
-                    transform=ax.transAxes)
+        if len(data) < 1:
+            ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                    transform=ax.transAxes, fontsize=10, color="gray")
             ax.set_title(SCENARIO_TITLES.get(sc, sc), fontsize=10)
             continue
 
-        # 左轴：全球总量
-        for m in METHODS:
-            if m in data:
-                totals = [data[m][y].sum() for y in YEARS]
-                ax.plot(YEARS, totals, color=METHOD_COLORS[m],
-                        label=METHOD_LABELS[m], linewidth=1.5)
+        # 左轴：全球总量（可用方法全画）
+        for m in data:
+            totals = [data[m][y].sum() for y in YEARS]
+            ax.plot(YEARS, totals, color=METHOD_COLORS[m],
+                    label=METHOD_LABELS[m], linewidth=1.5)
         ax.set_ylabel(f"Global ({unit})")
         ax.set_title(SCENARIO_TITLES.get(sc, sc), fontsize=10)
         if idx == 0:
@@ -111,36 +110,57 @@ def plot_indicator_dashboard_all_scenarios(indicator_key: str) -> Path | None:
 # ═══════════════════════════════════════════════════════════
 
 def plot_share_all_scenarios(share_key: str) -> Path | None:
-    """单份额指标 4 情景 2×2 布局：Top-5 国家时序。"""
+    """单份额指标 4 情景 2×2 布局：Top-5 国家时序。
+
+    至少有一个情景有数据才生成图表，单方法场景不做 "insufficient data" 报错。
+    """
     spec = DERIVED_SHARES[share_key]
 
+    # 预检：是否有任何情景有数据
+    has_any_data = False
+    for sc in SCENARIOS:
+        if len(_load_share(share_key, sc)) >= 1:
+            has_any_data = True
+            break
+    if not has_any_data:
+        return None  # 无数据，静默跳过
+
+    is_bounded = share_key not in ("energy_intensity", "per_capita_co2")
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     axes = axes.flatten()
 
     for idx, sc in enumerate(SCENARIOS):
         ax = axes[idx]
         data = _load_share(share_key, sc)
-        if len(data) < 2:
-            ax.text(0.5, 0.5, "insufficient data", ha="center", va="center",
-                    transform=ax.transAxes)
+        if len(data) < 1:
+            ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                    transform=ax.transAxes, fontsize=10, color="gray")
             ax.set_title(SCENARIO_TITLES.get(sc, sc), fontsize=10)
             continue
 
         ref = list(data.values())[0]
         top5 = ref.groupby("iso")[2100].sum().nlargest(5).index.tolist()
+        plotted_iso = False
         for iso in top5:
-            for m in METHODS:
-                if m in data:
-                    row = data[m][data[m]["iso"] == iso]
-                    if len(row):
-                        vals = [row[y].values[0] for y in YEARS]
-                        ax.plot(YEARS, vals, color=METHOD_COLORS[m], linewidth=1.2,
-                                alpha=0.7, label=f"{iso.upper()}" if m == METHODS[0] else "")
+            for m in data:  # 可用几个方法就画几个
+                row = data[m][data[m]["iso"] == iso]
+                if len(row):
+                    vals = [row[y].values[0] for y in YEARS]
+                    label = f"{iso.upper()} ({m})" if not plotted_iso and iso == top5[0] else ""
+                    ax.plot(YEARS, vals, color=METHOD_COLORS[m], linewidth=1.2,
+                            alpha=0.7)
+                    plotted_iso = True
         ax.set_title(SCENARIO_TITLES.get(sc, sc), fontsize=10)
-        ax.set_ylabel("Share")
-        ax.set_ylim(0, 1)
-        if idx == 0:
-            ax.legend(fontsize=6, ncol=3)
+        ax.set_ylabel("Value")
+        if not is_bounded:
+            ax.set_yscale("log")
+        else:
+            ax.set_ylim(-0.05, 1.05)
+        if idx == 0 and len(data) > 0:
+            # 显示可用方法
+            available = ", ".join(m for m in data)
+            ax.text(0.02, 0.98, f"Methods: {available}", transform=ax.transAxes,
+                    fontsize=7, va="top", alpha=0.6)
 
     fig.suptitle(f"{spec['name']} ({spec['sdg']}) — All Scenarios", fontsize=14, y=1.01)
     fig.tight_layout()
@@ -278,7 +298,7 @@ def plot_convergence_profile() -> Path:
 def plot_method_scatter_two_years(scenario: str = "SSP126") -> Path:
     """TFC 方法间散点图：2050 vs 2100 双行对比。"""
     data = _load("tfc", scenario)
-    if len(data) < 2:
+    if len(data) < 1:
         return None
 
     pairs = [("logit", "kaya"), ("logit", "dscale"), ("kaya", "dscale")]

@@ -626,14 +626,14 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 
 ## 十一、审计状态
 
-最新审计：**v3**（2026-06-09），五轮审计：代码 → 官方交叉验证 → 文献验证 → 测试清理 → 敏感性分析
+最新审计：**v4**（2026-06-15），五轮审计：代码 → 官方交叉验证 → 文献验证 → 测试清理 → 敏感性分析
 
 | 指标 | 值 |
 |------|---|
-| 测试通过 | 293/293（5 个测试文件） |
+| 测试通过 | 226/226（5 个测试文件，0 warnings） |
 | Pipeline 状态 | 96 降尺度 + 48 份额 + 76 图表，全部通过 |
 | 审计完成度 | 代码正确性 ✅ / 官方交叉验证 ✅ / 文献引用 ✅ / 边缘覆盖 ✅ |
-| 已知 Bug 修复 | 20 项（v1: 4 + v3: 10 + v4: 6） |
+| 已知 Bug 修复 | 21 项（v1: 4 + v3: 10 + v4: 7） |
 
 ### 已知局限
 
@@ -659,7 +659,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 | 9 | 份额指标 Kaya/DSCALE 简单比值法超界（46/35 国 >1.0）→ Logit 空间收敛 | R3 |
 | 10 | `gamma_c` inf/nan 传播 + 极端贫困国负 γ 发散 | R4-R5 |
 
-### v4 修复（6 项）
+### v4 修复（7 项）
 
 | # | 修复内容 |
 |---|---------|
@@ -669,18 +669,20 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 | 14 | Kaya/DSCALE 份额等比缩放+clip 守恒偏差 → 迭代封顶缩放 `_iterative_capped_scaling` |
 | 15 | Logit 份额封顶-重分配振荡 → 已封顶国家排除后续重分配 |
 | 16 | `read_gcam_generic` 仅识别 EJ → 扩展 PJ/Mtoe/GWh + 未知单位 warning |
+| 17 | ENSHORT 回归双 log → 改用 `scipy.stats.linregress` 直对 log 数据回归 |
 
 ### 测试文件清单
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
-| `test_conservation.py` | ~170 | 区域守恒、单国一致性、份额有界、NaN/负数检测 |
+| `test_conservation.py` | 82 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、ENLONG 回归 |
-| `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、_regional_conserve、mapping |
+| `test_edge_cases.py` | 39 | convergence_gamma、van_vuuren_ei、convergence_weight、_regional_conserve、mapping |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
-| `test_validation_experiments.py` | 40 | 份额有界性（48 项参数化）、单国一致性、ENLONG α 调和 |
+| `test_validation_experiments.py` | 60 | 份额有界性（48 参数化）、单国一致性（全情景）、ENLONG α 调和 |
+
+运行策略：`-m "not slow"` 跳过集成测试（~60s）；全量 ~125s。
 
 ### 后续建议
 
-- **中优先级**：`compute_logit_share` 中 Africa_Eastern/South America_Northern 收敛警告调查
 - **低优先级**：集成 World Bank WDI 或 Maddison Project GDP 数据以覆盖 ENSHORT 的 5 个缺失国

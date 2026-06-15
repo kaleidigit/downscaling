@@ -283,16 +283,17 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 ## 测试
 
 ```bash
-uv run python -m pytest compare/tests/ -q   # 293 测试，全部通过
+uv run python -m pytest compare/tests/ -q   # 226 测试，全部通过
+uv run python -m pytest compare/tests/ -q -m "not slow"  # 核心测试 ~60s
 ```
 
 | 文件 | 测试数 | 覆盖 |
 |------|--------|------|
-| `test_conservation.py` | ~170 | 区域守恒（含 GCAM 对比）、单国一致性、份额有界、NaN/负数检测 |
+| `test_conservation.py` | 82 | 区域守恒（GCAM 对比）、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 公式逐元素对比 |
-| `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、mapping |
+| `test_edge_cases.py` | 39 | convergence_gamma、van_vuuren_ei、convergence_weight、mapping |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
-| `test_validation_experiments.py` | 40 | 份额有界性实验、单国一致性实验、ENLONG α 调和实验 |
+| `test_validation_experiments.py` | 60 | 份额有界性、单国一致性（全情景）、ENLONG α 调和、边缘场景 |
 
 ---
 
@@ -301,7 +302,7 @@ uv run python -m pytest compare/tests/ -q   # 293 测试，全部通过
 ```
 downscaling/
 ├── README.md                     # 本文件
-├── AUDIT.md                      # v4 审计报告（20 项 Bug 修复）
+├── AUDIT.md                      # v4 审计报告（21 项 Bug 修复）
 ├── CLAUDE.md                     # 详细数据规格与代码规范
 ├── pyproject.toml                # uv 环境配置
 ├── data/                         # 输入数据
@@ -322,7 +323,7 @@ downscaling/
 │   ├── dscale/                   # 方案 B: DSCALE 官方适配层
 │   │   ├── dscale_official.py    # ENLONG/ENSHORT/收敛/MAX_TC
 │   │   └── downscale_tfc.py      # TFC 专用入口（含 ENSHORT 历史回归）
-│   ├── tests/                    # 5 个测试文件，293 测试
+│   ├── tests/                    # 5 测试文件 + conftest，226 测试
 │   ├── output/                   # 所有输出（gitignored）
 │   ├── run_all.py                # 一键运行（支持 N_JOBS 并行）
 │   └── compare_results.py        # 对比可视化
@@ -339,7 +340,7 @@ downscaling/
 
 ## 审计状态
 
-v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。20 项 Bug 修复。293 测试全部通过。详见 `AUDIT.md`。
+v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。21 项 Bug 修复。226 测试全部通过，0 warnings。详见 `AUDIT.md`。
 
 ---
 

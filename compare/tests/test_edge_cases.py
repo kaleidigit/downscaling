@@ -330,3 +330,31 @@ class TestIeaNameIndex:
         from compare.common.io import _build_iea_name_index
         idx = _build_iea_name_index()
         assert any("china" in k for k in idx), "China not found in IEA name index"
+
+
+# ═══════════════════════════════════════════════════════════
+# downscale_logit zero-IEA 分支
+# ═══════════════════════════════════════════════════════════
+
+class TestDownscaleLogitZeroIEA:
+    """区域内所有国家 IEA 为零时，均分 GCAM 区域值（不 crash）。"""
+
+    def test_zero_iea_region_equal_split(self):
+        from compare.common.downscale import downscale_logit
+        from compare.common.config import INDICATORS
+
+        cfg = INDICATORS["tfc"]
+        # 用真实区域 Africa_Eastern（多国区域），所有国家 IEA 为零
+        gcam = pd.DataFrame([{
+            "Scenario": "SSP126", "Region": "Africa_Eastern",
+            **{y: 200.0 for y in YEARS}
+        }])
+        iea_baseline = {}  # 全部国家 IEA 为零
+
+        df = downscale_logit(iea_baseline, gcam, "SSP126", cfg)
+        # 不应 crash（旧代码 n_r 未定义触发 NameError）
+        rows = df[df["Region"] == "Africa_Eastern"]
+        assert len(rows) >= 2, f"Africa_Eastern should have ≥2 countries, got {len(rows)}"
+        for y in YEARS:
+            total = float(rows[y].sum())
+            assert abs(total - 200.0) < 1e-4, f"y={y}: sum={total}"

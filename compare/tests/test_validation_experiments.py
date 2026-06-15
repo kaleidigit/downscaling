@@ -255,3 +255,124 @@ class TestEnshortDegenerate:
                 v = params["XXX"].get(k)
                 if v is not None:
                     assert np.isfinite(v), f"Non-finite value in {k}: {v}"
+
+
+# ═══════════════════════════════════════════════════════════
+# ENSHORT 回归正确性（防止双 log 回归）
+# ═══════════════════════════════════════════════════════════
+
+class TestEnshortCorrectness:
+    """ENSHORT 回归应产生正确的 log-log 系数（非 double-log）。"""
+
+    def test_recovered_beta_matches_known_relationship(self):
+        """已知 log(EI) = ln(3) + 2×log(GDP_pcap)，验证 β≈2, α≈ln(3)。"""
+        from compare.dscale.dscale_official import fit_enshort_countries
+        import numpy as np
+
+        rng = np.random.RandomState(123)
+        iso = "TST"
+        tfc_hist: dict[str, dict[int, float]] = {iso: {}}
+        gdp_hist: dict[str, dict[int, float]] = {iso: {}}
+        pop_hist: dict[str, dict[int, float]] = {iso: {}}
+
+        for y in range(1970, 2016):
+            gdp_pcap = 2.0 + 0.1 * (y - 1970) + 0.05 * rng.randn()
+            pop_hist[iso][y] = 1.0
+            gdp_hist[iso][y] = gdp_pcap
+            ei = 3.0 * (gdp_pcap ** 2.0) * (1.0 + 0.03 * rng.randn())
+            tfc_hist[iso][y] = ei * gdp_pcap
+
+        params = fit_enshort_countries(tfc_hist, gdp_hist, pop_hist)
+
+        assert iso in params, "ENSHORT 应成功拟合测试国"
+        beta = params[iso]["beta"]
+        alpha = params[iso]["alpha"]
+        r2 = params[iso]["r_squared"]
+
+        # β 应在 2.0 附近（允许噪声导致的误差）
+        assert 1.5 < beta < 2.5, f"beta={beta:.3f}, 预期 ≈2.0"
+        # α 应在 ln(3)≈1.099 附近
+        assert 0.5 < alpha < 1.8, f"alpha={alpha:.3f}, 预期 ≈1.1"
+        assert r2 > 0.8, f"R²={r2:.3f}, 预期 >0.8"
+
+    def test_no_runtime_warning_with_sub_one_values(self):
+        """gdp_pcap < 1 的 log 为负值，不应触发 RuntimeWarning（非 double-log）。"""
+        import warnings
+        from compare.dscale.dscale_official import fit_enshort_countries
+
+        iso = "TST"
+        tfc: dict[str, dict[int, float]] = {iso: {}}
+        gdp: dict[str, dict[int, float]] = {iso: {}}
+        pop: dict[str, dict[int, float]] = {iso: {}}
+
+        for y in range(1970, 2016):
+            gdp_pcap = 0.5 + 0.01 * (y - 1970)  # < 1, log is negative
+            pop[iso][y] = 1.0
+            gdp[iso][y] = gdp_pcap
+            ei = 2.0 * (gdp_pcap ** 1.5)
+            tfc[iso][y] = ei * gdp_pcap
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            params = fit_enshort_countries(tfc, gdp, pop)
+            # 不应产生 RuntimeWarning（旧 double-log 代码会）
+            runtime_warnings = [x for x in w
+                               if issubclass(x.category, RuntimeWarning)
+                               and "log" in str(x.message).lower()]
+            assert len(runtime_warnings) == 0, \
+                f"产生了 {len(runtime_warnings)} 个 log RuntimeWarning"
+
+        assert iso in params
+        assert np.isfinite(params[iso]["beta"])
+
+
+# ═══════════════════════════════════════════════════════════
+# 迭代封顶缩放回归测试
+# ═══════════════════════════════════════════════════════════
+
+class TestIterativeCappedScaling:
+    """_iterative_capped_scaling 应保证守恒完美且无振荡。"""
+
+    def test_exact_conservation_with_capping(self):
+        """封顶场景：部分国家 R>E_c，封顶后守恒仍精确。"""
+        from compare.common.downscale import _iterative_capped_scaling
+
+        region_isos = ["a", "b", "c"]
+        S_proj = {"a": {2050: 0.1}, "b": {2050: 0.3}, "c": {2050: 0.6}}
+        E_c = {"a": 100.0, "b": 200.0, "c": 1000.0}  # b capped (0.3*200=60, but may grow)
+        target = 300.0
+
+        _iterative_capped_scaling(region_isos, S_proj, E_c, target, 2050)
+
+        # 验证守恒
+        allocated = sum(E_c[iso] * S_proj[iso][2050] for iso in region_isos)
+        assert abs(allocated - target) < 1e-6, \
+            f"守恒偏差: allocated={allocated:.6f} vs target={target}"
+
+        # 验证份额有界
+        for iso in region_isos:
+            assert 0.0 <= S_proj[iso][2050] <= 1.0, \
+                f"{iso}: share={S_proj[iso][2050]} outside [0,1]"
+
+    def test_all_countries_at_boundary(self):
+        """全部国家 R>E_c 的边缘场景。"""
+        from compare.common.downscale import _iterative_capped_scaling
+
+        region_isos = ["a", "b"]
+        S_proj = {"a": {2100: 0.9}, "b": {2100: 0.9}}
+        E_c = {"a": 10.0, "b": 10.0}
+        target = 25.0  # > sum(E_c) = 20, impossible to match
+
+        _iterative_capped_scaling(region_isos, S_proj, E_c, target, 2100)
+
+        for iso in region_isos:
+            assert 0.0 <= S_proj[iso][2100] <= 1.0
+
+    def test_single_country_trivial(self):
+        from compare.common.downscale import _iterative_capped_scaling
+
+        region_isos = ["x"]
+        S_proj = {"x": {2020: 0.5}}
+        E_c = {"x": 100.0}
+        _iterative_capped_scaling(region_isos, S_proj, E_c, 50.0, 2020)
+        assert abs(S_proj["x"][2020] - 0.5) < 1e-6

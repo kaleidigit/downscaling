@@ -74,12 +74,12 @@ def plot_indicator_dashboard_all_scenarios(indicator_key: str) -> Path | None:
             ax.set_title(SCENARIO_TITLES.get(sc, sc), fontsize=10)
             continue
 
-        # 左轴：全球总量（可用方法全画）
+        # 左轴：国家中位数时序（方法差异在分配层面体现，全球总因守恒相同）
         for m in data:
-            totals = [data[m][y].sum() for y in YEARS]
-            ax.plot(YEARS, totals, color=METHOD_COLORS[m],
+            medians = [data[m][y].median() for y in YEARS]
+            ax.plot(YEARS, medians, color=METHOD_COLORS[m],
                     label=METHOD_LABELS[m], linewidth=1.5)
-        ax.set_ylabel(f"Global ({unit})")
+        ax.set_ylabel(f"Median country ({unit})")
         ax.set_title(SCENARIO_TITLES.get(sc, sc), fontsize=10)
         if idx == 0:
             ax.legend(fontsize=7, loc="upper left")
@@ -140,27 +140,30 @@ def plot_share_all_scenarios(share_key: str) -> Path | None:
 
         ref = list(data.values())[0]
         top5 = ref.groupby("iso")[2100].sum().nlargest(5).index.tolist()
-        plotted_iso = False
         for iso in top5:
-            for m in data:  # 可用几个方法就画几个
+            for m in data:
                 row = data[m][data[m]["iso"] == iso]
                 if len(row):
                     vals = [row[y].values[0] for y in YEARS]
-                    label = f"{iso.upper()} ({m})" if not plotted_iso and iso == top5[0] else ""
                     ax.plot(YEARS, vals, color=METHOD_COLORS[m], linewidth=1.2,
                             alpha=0.7)
-                    plotted_iso = True
+        # ISO 标签在曲线末端
+        for iso in top5:
+            if iso in ref.index:
+                v = float(ref.loc[iso, 2100])
+                ax.text(2102, v, iso.upper(), fontsize=6, va='center', alpha=0.8)
         ax.set_title(SCENARIO_TITLES.get(sc, sc), fontsize=10)
         ax.set_ylabel("Value")
         if not is_bounded:
             ax.set_yscale("log")
         else:
             ax.set_ylim(-0.05, 1.05)
-        if idx == 0 and len(data) > 0:
-            # 显示可用方法
-            available = ", ".join(m for m in data)
-            ax.text(0.02, 0.98, f"Methods: {available}", transform=ax.transAxes,
-                    fontsize=7, va="top", alpha=0.6)
+        if idx == 0:
+            # 方法颜色图例 + 国家名标注
+            from matplotlib.lines import Line2D
+            handles = [Line2D([0],[0], color=METHOD_COLORS[m], linewidth=1.5,
+                              label=METHOD_LABELS[m]) for m in data]
+            ax.legend(handles=handles, fontsize=7, loc="upper left")
 
     fig.suptitle(f"{spec['name']} ({spec['sdg']}) — All Scenarios", fontsize=14, y=1.01)
     fig.tight_layout()

@@ -22,12 +22,15 @@ import pandas as pd
 
 @contextlib.contextmanager
 def _suppress_np_warnings():
-    """上下文管理器：仅在使用官方 LogLogFunc 回归时抑制除零/无效值警告。"""
-    old = np.seterr(divide="ignore", invalid="ignore")
-    try:
-        yield
-    finally:
-        np.seterr(**old)
+    """抑制 LogLogFunc 回归中的除零/无效值 RuntimeWarning。"""
+    import warnings
+    old_err = np.seterr(divide="ignore", invalid="ignore")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        try:
+            yield
+        finally:
+            np.seterr(**old_err)
 
 # 将官方 DSCALE 仓库加入 path，以便直接 import fit_funcs
 _DSCALE_REPO = Path(__file__).resolve().parents[2] / "DSCALE"
@@ -174,7 +177,7 @@ def fit_enlong_official(
 
     ff = LogLogFunc()
     with _suppress_np_warnings():
-        ff.fit(pd.Series(x), pd.Series(y))
+        ff.fit(x, y)
 
     # ── ENLONG alpha 调和（官方 fun_harmonize_alpha, utils.py:24672）──
     # α += log(y_base) - (α + β × log(x_base))
@@ -272,29 +275,30 @@ def fit_enshort_countries(
 
         x_arr = np.array(x_vals, dtype=float)
         y_arr = np.array(y_vals, dtype=float)
-        ff = LogLogFunc()
+
+        # 官方 DSCALE: linregress on already log-transformed data (NOT LogLogFunc)
+        from scipy.stats import linregress
         try:
-            ff.fit(pd.Series(x_arr), pd.Series(y_arr))
+            lr = linregress(x_arr, y_arr)
         except (ValueError, RuntimeError):
-            continue  # 无法回归（零方差等），跳过该国
+            continue
 
         # ── A2: alpha 调和 (官方 fun_harmonize_alpha, utils.py:24672) ──
         # alpha += log(y_base) - (alpha + beta * log(x_base))
+        alpha_val = float(lr.intercept)
+        beta_val = float(lr.slope)
         t = base_year
         if t not in year_y:
-            # 回退到最接近基准年的可用年份（官方逻辑）
             available = sorted(year_y.keys())
             t = max(base_year, min(available)) if available else base_year
         if t in year_y and t in year_x:
-            alpha_raw = ff.alpha or 0.0
-            beta_val = ff.beta or 0.0
-            ff.alpha = alpha_raw + year_y[t] - (alpha_raw + beta_val * year_x[t])
+            alpha_val = alpha_val + year_y[t] - (alpha_val + beta_val * year_x[t])
 
         hist_years = sorted(year_y.keys())
         params[iso] = {
-            "alpha": ff.alpha or 0.0,
-            "beta": ff.beta or 0.0,
-            "r_squared": ff.r_squared or 0.0,
+            "alpha": alpha_val,
+            "beta": beta_val,
+            "r_squared": float(lr.rvalue ** 2),
             "n_points": len(x_vals),
             "hist_start": hist_years[0],
             "hist_end": hist_years[-1],

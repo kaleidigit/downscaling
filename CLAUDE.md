@@ -633,7 +633,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 | 测试通过 | 293/293（5 个测试文件） |
 | Pipeline 状态 | 96 降尺度 + 48 份额 + 76 图表，全部通过 |
 | 审计完成度 | 代码正确性 ✅ / 官方交叉验证 ✅ / 文献引用 ✅ / 边缘覆盖 ✅ |
-| 已知 Bug 修复 | 15 项（v1: 4 + v3: 10 + v4: 1） |
+| 已知 Bug 修复 | 20 项（v1: 4 + v3: 10 + v4: 6） |
 
 ### 已知局限
 
@@ -642,7 +642,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 3. **DSCALE ENSHORT 覆盖率 96.6%**：143/148 国有逐国历史回归，5 国回退到 GDP 缩放（瓶颈在 USDA GDP 历史数据，非 TFC 数据）。
 4. **DSCALE MAX_TC 回退值**：2200/2120/2040 三段回退是项目自定义启发式（官方 DSCALE 总能做 ENSHORT 回归，无此需要）。
 5. **DSCALE 收敛 β 来源**：使用 ENLONG β（区域 IAM 回归）而非 ENSHORT β（官方使用），但 ENSHORT β 可用时优先使用。已通过交叉验证测试确认与官方公式一致。
-6. **Kaya/DSCALE 份额计算**：份额在 Logit 空间计算（`compute_kaya_share`/`compute_dscale_share`），保证 ∈ [0,1]，但等比缩放+clip 产生微小守恒偏差（< 1% 区域分子）。Logit 份额使用完整的迭代封顶缩放（守恒完美）。
+6. **Kaya/DSCALE 份额计算**：份额在 Logit 空间计算（`compute_kaya_share`/`compute_dscale_share`），三方案均使用迭代封顶缩放（`_iterative_capped_scaling`），保证 ∈ [0,1] 且守恒完美。
 
 ### v3 审计中修复的 Bug（10 项）
 
@@ -659,11 +659,16 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 | 9 | 份额指标 Kaya/DSCALE 简单比值法超界（46/35 国 >1.0）→ Logit 空间收敛 | R3 |
 | 10 | `gamma_c` inf/nan 传播 + 极端贫困国负 γ 发散 | R4-R5 |
 
-### v4 修复（1 项）
+### v4 修复（6 项）
 
 | # | 修复内容 |
 |---|---------|
 | 11 | Kaya 方法从 φ 乘方公式切换到 van Vuuren 2007 / Gütschow 2021 官方指数插值法 |
+| 12 | `downscale_logit` 中 `n_r` 未定义 → 添加 `n_r = len(region_isos)` |
+| 13 | `read_iea_historical_tfc` 死代码 + 未定义变量 → 删除死代码 |
+| 14 | Kaya/DSCALE 份额等比缩放+clip 守恒偏差 → 迭代封顶缩放 `_iterative_capped_scaling` |
+| 15 | Logit 份额封顶-重分配振荡 → 已封顶国家排除后续重分配 |
+| 16 | `read_gcam_generic` 仅识别 EJ → 扩展 PJ/Mtoe/GWh + 未知单位 warning |
 
 ### 测试文件清单
 

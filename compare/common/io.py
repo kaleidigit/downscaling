@@ -285,7 +285,24 @@ def read_gcam_generic(
         import warnings
         warnings.warn(f"GCAM file {path.name} missing 'Units' column; assuming raw unit = target unit (no conversion)")
     unit = str(df["Units"].iloc[0]).strip() if "Units" in df.columns else ""
-    factor = unit_factor if unit_factor != 1.0 else (1_000_000 if "EJ" in unit.upper() else 1.0)
+    if unit_factor != 1.0:
+        factor = unit_factor
+    else:
+        unit_upper = unit.upper()
+        if "EJ" in unit_upper:
+            factor = 1_000_000
+        elif "PJ" in unit_upper:
+            factor = 1_000
+        elif "MTOE" in unit_upper:
+            factor = 41_868  # 1 Mtoe ≈ 41.868 TJ
+        elif "GWH" in unit_upper:
+            factor = 3.6
+        elif unit_upper:
+            import warnings
+            warnings.warn(f"GCAM file {path.name}: unknown unit '{unit}', no conversion applied")
+            factor = 1.0
+        else:
+            factor = 1.0
 
     # Taiwan → China
     df = merge_twain_region(df, "Region")
@@ -517,43 +534,12 @@ def read_iea_worldbal(
 
 
 def read_iea_historical_tfc() -> dict[str, dict[int, float]]:
-    return read_iea_worldbal("Total final consumption", "Total")
     """读取 IEA 2015-2020 多年度 TFC 数据。
 
     Returns:
         {iso: {2015: value_TJ, 2016: ..., 2020: value_TJ}}
     """
-    import pandas as pd
-
-    df = pd.read_csv(IEA_HISTORICAL_PATH, dtype=str)
-    mask = (
-        df["Flow"].str.strip().str.lower().eq("total final consumption")
-        & df["Product"].str.strip().str.lower().eq("total")
-    )
-    df = df[mask].copy()
-    df["TIME_PERIOD"] = df["TIME_PERIOD"].astype(int)
-    df["OBS_VALUE"] = pd.to_numeric(df["OBS_VALUE"], errors="coerce")
-
-    name_to_iso = _build_iea_name_index()
-
-    result: dict[str, dict[int, float]] = {}
-    for _, row in df.iterrows():
-        country = str(row["Country/Region"]).strip()
-        if not country:
-            continue
-        n = normalize_name(country)
-        n = IEA_VARIANTS.get(n, n)
-        iso = name_to_iso.get(n)
-        if iso is None or iso in EXCLUDED_ISO:
-            continue
-        iso = "chn" if iso == "twn" else iso
-        y = int(row["TIME_PERIOD"])
-        val = float(row["OBS_VALUE"])
-        if iso not in result:
-            result[iso] = {}
-        result[iso][y] = result[iso].get(y, 0.0) + val
-
-    return result
+    return read_iea_worldbal("Total final consumption", "Total")
 
 
 def compute_ei_trend_2015_2020(

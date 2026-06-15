@@ -2,8 +2,8 @@
 
 **项目**：GCAM 区域→国家降尺度三方案对比  
 **审计周期**：2026-06-01 ~ 2026-06-09（五轮递进）  
-**当前状态**：290/290 测试通过 | 14 项 Bug 已修复 | 5 项待修复 | 4 项方法论偏差（已记录）  
-**审计结论**：三方案降尺度核心算法逻辑正确，区域守恒满足，份额有界性保证。遗留问题均为边缘场景或非核心路径，不影响主要结论。
+**当前状态**：293/293 测试通过 | 20 项 Bug 已修复 | 0 项待修复 | 2 项方法论偏差（已记录）
+**审计结论**：三方案降尺度核心算法逻辑正确，区域守恒满足，份额有界性保证。所有已知问题均已修复。
 
 ---
 
@@ -50,44 +50,27 @@
 | 13 | 人口下限 `max(p, 1.0)` → `max(p, 1e-6)` | 避免虚假归零 | `dscale_official.py` |
 | 14 | 重复函数/字典、np.seterr 全局副作用 | 清理 | 多文件 |
 
+### v4 修复（6 项）
+
+| # | 问题 | 严重性 | 文件 |
+|---|------|--------|------|
+| 15 | Kaya φ 乘方 → van Vuuren 2007 官方指数插值法 | 高 | `downscale.py` |
+| 16 | `downscale_logit` 中 `n_r` 未定义（运行时 NameError）| 中 | `downscale.py` |
+| 17 | `read_iea_historical_tfc` 死代码 + 未定义变量引用 | 低 | `io.py` |
+| 18 | Kaya/DSCALE 份额等比缩放+clip 丢超额量 → 守恒偏差 | 中 | `downscale.py` |
+| 19 | Logit 份额封顶-重分配振荡 → 迭代不收敛 | 中 | `downscale.py` |
+| 20 | `read_gcam_generic` 仅识别 EJ，其他单位静默错误 | 低 | `io.py` |
+
+修复详情：
+- **#16**：在 `downscale_logit` 中添加 `n_r = len(region_isos)`
+- **#17**：删除 return 后的 36 行死代码，docstring 移至函数头
+- **#18**：提取 `_iterative_capped_scaling()` 共享函数，三方案份额均使用迭代封顶缩放（守恒完美）
+- **#19**：已封顶国家标记为 `permanently_capped`，排除后续重分配，防止振荡
+- **#20**：扩展单位识别为 EJ/PJ/Mtoe/GWh，未知单位发出 warning
+
 ---
 
-## 三、待修复问题（5 项）
-
-### P1：`downscale_logit` 中 `n_r` 未定义 — 运行时 NameError
-
-**文件**：`compare/common/downscale.py:459`  
-**现象**：当区域内所有国家 IEA 基准为零时，`equal_share = 1.0 / n_r` 触发 `NameError`，因为 `n_r` 未在函数内赋值（`downscale_kaya` 和 `downscale_dscale` 均有 `n_r = len(region_isos)`）。  
-**影响**：目前未触发（所有区域均有 IEA 基准），但未来添加新指标或数据缺失时可能崩溃。  
-**修复**：在 `downscale_logit` 中添加 `n_r = len(region_isos)`。
-
-### P2：`read_iea_historical_tfc` 死代码
-
-**文件**：`compare/common/io.py:519-556`  
-**现象**：函数在 line 520 立即 `return read_iea_worldbal(...)`，后续 36 行代码（含 docstring 和完整数据处理逻辑）不可达。且死代码中引用了未定义的 `IEA_HISTORICAL_PATH`。  
-**影响**：功能正确（WORLDBAL 路径已覆盖），但代码误导性高。  
-**修复**：删除 line 521-556 的死代码，将 docstring 移至函数头。
-
-### P3：Kaya/DSCALE 份额守恒偏差
-
-**文件**：`compare/common/downscale.py` `compute_kaya_share`/`compute_dscale_share`  
-**现象**：等比缩放 `k = target/sum_R` 后，部分国家 `R[iso]` 超过 `E_c[iso]`，被 clip 到 1.0 时丢弃超额量，导致 `Σ(S×E) < target`。Logit 份额的迭代封顶缩放无此问题。  
-**影响**：偏差 <1% 区域分子，对结论无实质影响。  
-**修复方案**：将 Kaya/DSCALE 份额也改用迭代封顶缩放（复用 `compute_logit_share` 阶段 3 逻辑）。
-
-### P4：Logit 份额 Africa_Eastern / South America_Northern 收敛振荡
-
-**文件**：`compare/common/downscale.py:679-728`  
-**现象**：封顶-重分配循环中，部分国家份额在 0/1 边界附近反复振荡，50 次迭代不收敛（误差 ~1e3 TJ），但最终输出仍正确有界。  
-**影响**：仅触发 warning，输出可用但守恒精度略低。  
-**修复方案**：(a) 追踪已封顶国家并排除其参与后续重分配，或 (b) 改用约束优化求解。
-
-### P5：`read_gcam_generic` 单位自动检测不完整
-
-**文件**：`compare/common/io.py:288`  
-**现象**：仅识别 "EJ" 单位，若 GCAM 文件使用 PJ/Mtoe 等非标准单位，factor 默认 1.0 静默产生错误结果。  
-**影响**：目前所有 GCAM 文件均为 EJ 或 GWh，暂未触发。  
-**修复方案**：扩展单位识别或强制要求 `unit_factor` 参数。
+## 三、已知局限
 
 ---
 
@@ -183,4 +166,4 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 
 ---
 
-审计签字：2026-06-15。官方 DSCALE 代码零修改。15 项 Bug 修复，5 项待修复（P1-P5），2 项方法论偏差已记录。
+审计签字：2026-06-15。官方 DSCALE 代码零修改。20 项 Bug 修复，0 项待修复，2 项方法论偏差已记录。

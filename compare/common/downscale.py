@@ -465,6 +465,7 @@ def downscale_logit(
         region = g_row["Region"]
         mlist = members_by_region.get(region, [])
         region_isos = _region_isos(mlist)
+        n_r = len(region_isos)
 
         region_iea_sum = sum(iea_baseline.get(iso, 0.0) for iso in region_isos)
 
@@ -617,6 +618,66 @@ def run_indicator(
 
 
 # ═══════════════════════════════════════════════════
+# 迭代封顶缩放（共享于三种 share 函数）
+# ═══════════════════════════════════════════════════
+
+def _iterative_capped_scaling(
+    region_isos: list[str],
+    S_proj: dict[str, dict[int, float]],
+    E_c: dict[str, float],
+    target: float,
+    y: int,
+    max_iter: int = 50,
+    tol: float = 1e-6,
+) -> None:
+    """迭代缩放封顶校准：缩放 S×E 之和控制到 target，封顶上限 E_c。
+
+    Once-capped countries are excluded from future redistribution to prevent
+    oscillation (cap → redistribute → over-cap → redistribute cycle).
+    """
+    R_current = {iso: max(E_c.get(iso, 0.0) * S_proj[iso][y], 0.0) for iso in region_isos}
+    permanently_capped: set[str] = set()
+
+    for _ in range(max_iter):
+        sum_R = sum(R_current.values())
+        if sum_R < 1e-12:
+            break
+        if abs(target - sum_R) < tol:
+            break
+
+        k = target / sum_R
+        newly_capped: set[str] = set()
+        freed_amount = 0.0
+        for iso in region_isos:
+            if iso in permanently_capped:
+                continue
+            R_temp = R_current[iso] * k
+            e = E_c.get(iso, 0.0)
+            if e > 0 and R_temp > e:
+                R_current[iso] = e
+                newly_capped.add(iso)
+                permanently_capped.add(iso)
+                freed_amount += (R_temp - e)
+            else:
+                R_current[iso] = R_temp
+
+        if newly_capped and freed_amount > 0:
+            uncapped = [iso for iso in region_isos if iso not in permanently_capped]
+            uncapped_sum = sum(R_current[iso] for iso in uncapped)
+            if uncapped_sum > 0 and len(uncapped) > 0:
+                for iso in uncapped:
+                    R_current[iso] += freed_amount * (R_current[iso] / uncapped_sum)
+
+    for iso in region_isos:
+        e = E_c.get(iso, 0.0)
+        if e > 0:
+            R_current[iso] = min(R_current[iso], e)
+            S_proj[iso][y] = R_current[iso] / e
+        else:
+            S_proj[iso][y] = 0.0
+
+
+# ═══════════════════════════════════════════════════
 # Logit 份额计算（logit降尺度方案.md 阶段 1–3）
 # ═══════════════════════════════════════════════════
 
@@ -695,59 +756,7 @@ def compute_logit_share(
             E_c: dict[str, float] = {}
             for iso in region_isos:
                 E_c[iso] = float(df_den[df_den["iso"] == iso][y].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
-
-            # 初始 R
-            R_current = {iso: E_c.get(iso, 0.0) * S_proj[iso][y] for iso in region_isos}
-
-            converged = False
-            for _ in range(max_iter):
-                sum_R = sum(R_current.values())
-                if sum_R < 1e-12:
-                    converged = True
-                    break
-                error = target - sum_R
-                if abs(error) < tol:
-                    converged = True
-                    break
-
-                # 缩放因子
-                k = target / sum_R if sum_R > 0 else 1.0
-
-                # 初步缩放 + 封顶
-                capped_isos: set[str] = set()
-                freed_amount = 0.0
-                for iso in region_isos:
-                    R_temp = R_current[iso] * k
-                    e = E_c.get(iso, 0.0)
-                    if e > 0 and R_temp > e:
-                        R_current[iso] = e
-                        capped_isos.add(iso)
-                        freed_amount += (R_temp - e)
-                    else:
-                        R_current[iso] = R_temp
-
-                # 将封顶释放的量重新分配给未封顶国家
-                if capped_isos and freed_amount > 0:
-                    uncapped = [iso for iso in region_isos if iso not in capped_isos]
-                    uncapped_sum = sum(R_current[iso] for iso in uncapped)
-                    if uncapped_sum > 0 and len(uncapped) > 0:
-                        for iso in uncapped:
-                            R_current[iso] += freed_amount * (R_current[iso] / uncapped_sum)
-
-            if not converged:
-                import warnings
-                warnings.warn(
-                    f"Logit share iteration did not converge for {region} {y} "
-                    f"(error={abs(target - sum(R_current.values())):.2e} after {max_iter} iters)"
-                )
-            # 最终份额（强制 [0,1] 封顶）
-            for iso in region_isos:
-                e = E_c.get(iso, 0.0)
-                if e > 0:
-                    R_current[iso] = min(R_current[iso], e)
-                    S_proj[iso][y] = R_current[iso] / e
-                else:
-                    S_proj[iso][y] = 0.0
+            _iterative_capped_scaling(region_isos, S_proj, E_c, target, y, max_iter, tol)
 
         for iso in region_isos:
             row = {"Scenario": scenario, "iso": iso,
@@ -828,25 +837,13 @@ def compute_kaya_share(
                 L_proj = L_c + w_t * delta_L_R.get(y, 0.0)
                 S_proj[iso][y] = 1.0 / (1.0 + np.exp(-L_proj))
 
-        # 阶段 3：proportional scaling to match GCAM numerator
+        # 阶段 3：迭代缩放封顶校准
         for y in YEARS:
             target = float(g_row_num.get(y, 0) or 0)
             E_c: dict[str, float] = {}
             for iso in region_isos:
                 E_c[iso] = float(df_den[df_den["iso"] == iso][y].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
-
-            R = {iso: max(E_c.get(iso, 0.0) * S_proj[iso][y], 0.0) for iso in region_isos}
-            sum_R = sum(R.values())
-            if sum_R > 1e-12 and target > 0:
-                k = target / sum_R
-                for iso in region_isos:
-                    R[iso] *= k
-            for iso in region_isos:
-                e = E_c.get(iso, 0.0)
-                if e > 0:
-                    S_proj[iso][y] = float(np.clip(R[iso] / e, 0.0, 1.0))
-                else:
-                    S_proj[iso][y] = 0.0
+            _iterative_capped_scaling(region_isos, S_proj, E_c, target, y, max_iter, tol)
 
         for iso in region_isos:
             row = {"Scenario": scenario, "iso": iso,
@@ -930,25 +927,13 @@ def compute_dscale_share(
                 L_proj = enshort_L * conv_weight + enlong_L * (1.0 - conv_weight)
                 S_proj[iso][y] = 1.0 / (1.0 + np.exp(-L_proj))
 
-        # 阶段 3：Simple proportional scaling to match GCAM numerator.
+        # 阶段 3：迭代缩放封顶校准
         for y in YEARS:
             target = float(g_row_num.get(y, 0) or 0)
             E_c: dict[str, float] = {}
             for iso in region_isos:
                 E_c[iso] = float(df_den[df_den["iso"] == iso][y].values[0]) if len(df_den[df_den["iso"] == iso]) > 0 else 0.0
-
-            R = {iso: max(E_c.get(iso, 0.0) * S_proj[iso][y], 0.0) for iso in region_isos}
-            sum_R = sum(R.values())
-            if sum_R > 1e-12 and target > 0:
-                k = target / sum_R
-                for iso in region_isos:
-                    R[iso] *= k
-            for iso in region_isos:
-                e = E_c.get(iso, 0.0)
-                if e > 0:
-                    S_proj[iso][y] = float(np.clip(R[iso] / e, 0.0, 1.0))
-                else:
-                    S_proj[iso][y] = 0.0
+            _iterative_capped_scaling(region_isos, S_proj, E_c, target, y, max_iter, tol)
 
         for iso in region_isos:
             row = {"Scenario": scenario, "iso": iso,

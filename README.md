@@ -237,7 +237,7 @@ S_c(t) = 1 / (1 + exp(−L_c(t)))               (sigmoid 逆变换)
 - **Kaya**：`L_c(t) = L_c(2015) + w(t) × ΔL_R(t)`，w(t) = 1 − exp(γ×(t−y_h))（implemented in `compute_kaya_share()`）
 - **DSCALE**：`L_c(t) = ENSHORT_L × CONV_WEIGHT + ENLONG_L × (1−CONV_WEIGHT)`（implemented in `compute_dscale_share()`）
 
-然后用 sigmoid + 等比缩放 + clip 得到最终份额。保留了方法间收敛动力学差异，同时天然保证份额 ∈ [0,1]。
+然后用 sigmoid 逆变换 + 迭代封顶缩放（`_iterative_capped_scaling`）得到最终份额。三方案共享同一套迭代缩放逻辑，保证 ∈ [0,1] 且区域守恒完美。
 
 ---
 
@@ -301,7 +301,7 @@ uv run python -m pytest compare/tests/ -q   # 293 测试，全部通过
 ```
 downscaling/
 ├── README.md                     # 本文件
-├── AUDIT.md                      # v4 审计报告（15 项 Bug 修复）
+├── AUDIT.md                      # v4 审计报告（20 项 Bug 修复）
 ├── CLAUDE.md                     # 详细数据规格与代码规范
 ├── pyproject.toml                # uv 环境配置
 ├── data/                         # 输入数据
@@ -339,7 +339,7 @@ downscaling/
 
 ## 审计状态
 
-v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。15 项 Bug 修复。293 测试全部通过。详见 `AUDIT.md`。
+v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。20 项 Bug 修复。293 测试全部通过。详见 `AUDIT.md`。
 
 ---
 

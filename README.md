@@ -335,7 +335,7 @@ downscaling/
 │       ├── Energy_demand_downs_1.py  # 官方主降尺度流程
 │       └── utils.py              # 工具函数
 ├── archive/                      # 归档文件（历史代码、旧输出、补充资料）
-└── docs/audit/                   # 详细审计报告
+└── docs/                         # 绘图指南 + 历史审计档案
 ```
 
 ---

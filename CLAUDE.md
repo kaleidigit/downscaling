@@ -303,23 +303,17 @@ SDG1 输出为 160 行（不同的国家覆盖范围），CSV 格式。
 | `P_R(t)` | 区域 R 的人口总量（sum over c∈R）| 区域人口 |
 | `I_c(t)` | 能源强度 `E_c(t) / G_c(t)` | 计算 |
 | `I_R(t)` | 区域能源强度 `E_R(t) / G_R(t)` | 计算 |
-| `φ(c,t)` | 收敛权重函数 ∈ [0,1] | 方案定义 |
-| `t_0` | 基年 2015 | 固定 |
+| `γ` | 收敛衰减率 = ln(d)/(y_c−y_h) | van Vuuren 2007 |
+| `d` | 残差比率 = 0.01 | Gütschow 2021 |
+| `y_c` | 收敛完成年份 | 情景依赖 |
+| `y_h` | 历史基年 2015 | 固定 |
 
 ---
 
 ### 方案 A：Kaya 收敛法（kaya）
 
-**文献基础**：Kaya 恒等式（Kaya 1995）; van Vuuren et al. 2007（指数收敛降尺度概念）;
-Gütschow et al. 2021（SSP 收敛参数：d=0.01, 收敛年 2150-2300）
-
-> ⚠️ **方法定位**：本方案的数学公式（指数 φ 乘方追踪区域比例变化、γ_c 按人均 GDP 调整、
-> t_c 取 2070-2100）**不同于**文献中 van Vuuren 的指数插值法（`a_c × e^(γ·y) + b_c`，
-> 收敛年份 2150-2300）。这是对 Kaya 恒等式框架下收敛概念的**独立实现**，不宜直接归因于
-> van Vuuren 2007 或 Gidden 2019 的具体算法。在 IAM 降尺度文献中，将按国别调整的
-> 收敛速度（γ_c）与比例跟踪公式（φ 乘方）结合的做法**未见先例**。公式设计理念和参数
-> 选择（γ_c 的 0.3 系数、t_c 的 SSP 映射）为本项目的方法论决策。
-> 文献背景见下文对照表。
+**文献**：van Vuuren et al. 2007（指数收敛降尺度）;
+Gütschow et al. 2021 ESSD（SSP 收敛参数：d=0.01, 收敛年 2150-2300）
 
 **步骤 1**：基年能源强度
 ```
@@ -327,33 +321,38 @@ I_c(2015) = E_c^IEA / G_c(2015)
 I_R(t)   = E_R(t) / G_R(t)
 ```
 
-**步骤 2**：条件收敛（原创公式）
+**步骤 2**：van Vuuren 指数插值收敛
 ```
-I_c(t) = I_c(2015) × [I_R(t) / I_R(2015)] ^ φ(c,t)
-φ(c,t) = 1 - exp(-γ_c × (t - 2015) / (t_c - 2015))
-```
-核心思想：t=2015 时 φ=0，国家 EI 保持基年值；随着 t→t_c，φ→1-exp(-γ_c)，国家 EI
-逐渐追踪区域 EI 的比例变化。完全收敛仅渐进实现（φ→1 当 t→∞）。
+d = 0.01                                     # 残差比率，99%差距在收敛年消除
+γ = ln(d) / (y_c - y_h)                      # 负值，指数衰减率（情景统一）
+y_h = 2015                                    # 历史基年
+y_c = {SSP126: 2150, SSP245: 2200, SSP434: 2300, SSP460: 2300}  # Gütschow 2021
 
-**对比文献方法**（van Vuuren 2007; Gütschow et al. 2021 ESSD）：
+EI_c(y) = a_c × exp(γ×(y-y_h)) + b_c
+
+边界条件:
+  EI_c(y_h) = I_c(2015)    (国家基年能源强度)
+  EI_c(y_c) = I_R_target   (收敛到区域 EI)
+
+其中 I_R_target = I_R(2100)（GCAM 数据仅到 2100，收敛年均在 2100 之后，
+以最后可用的区域 EI 作为收敛目标）
+
+求解:
+  a_c = (I_c(2015) - I_R_target) / (1 - d)
+  b_c = I_c(2015) - a_c
+
+收敛年后 (y ≥ y_c): EI_c(y) = I_R(y)
+EI 下限: max(EI_c(y), 0), max(EI_c(y), I_c(2015) × 0.1)
+无 IEA 基准国家: I_c(2015) = I_R(2015)，则 a_c=0, b_c=I_R(2015)
 ```
-EI_c(y) = a_c × e^(γ·y) + b_c      # 指数插值到固定目标
-γ = ln(0.01) / (y_c - y_h)         # d=0.01: 到收敛年消除 99% 差距
-EI_c(y) = EI_R(y)   for y ≥ y_c    # 收敛年后完全等于区域值
-```
-| 差异点 | 文献（van Vuuren/Gütschow）| 本实现 |
-|--------|--------------------------|--------|
-| 收敛目标 | 收敛年的固定区域 EI 值 | 逐年变化的区域 EI 比例轨迹 |
-| 收敛年份 | SSP1=2150, SSP2=2200, SSP3/4=2300 | SSP126=2070, SSP245=2085, SSP434/460=2100 |
-| 收敛速度 | d=0.01 固定（99%差距消除）| γ_c 按人均 GDP 逐国调整 |
-| GDP 依赖 | 无（仅用于计算 EI）| γ_c = 1.0 + 0.3×ln(GDP_pcap_c/GDP_pcap_world) |
-| EI 下限 | 无 | max(I_c_t, I_c_2015 × 0.1)（10% 基年值）|
 
 **步骤 3-4**：同前。
 
-> **份额指标扩展**：对于份额类指标（fossil_share, renewable_share 等），Kaya 方法
-> 将上述 φ(t) 收敛权重应用于 Logit 变换空间：`L_c(t) = L_c(2015) + φ(t) × ΔL_R(t)`，
-> 然后 sigmoid 逆变换。这保留了逐国收敛速度差异，同时天然保证份额 ∈ [0,1]。
+> **份额指标扩展**：对于份额类指标，Kaya 方法将收敛权重
+> w(y) = 1 - exp(γ×(y-y_h)) 应用于 Logit 变换空间：
+> L_c(t) = L_c(2015) + w(t) × ΔL_R(t)，
+> 然后 sigmoid 逆变换。w(t) 是 van Vuuren 指数衰减的包络函数，
+> 直接衡量到年份 t 已完成的收敛比例。
 > 实现见 `compute_kaya_share()`。
 
 ---
@@ -631,20 +630,19 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 
 | 指标 | 值 |
 |------|---|
-| 测试通过 | 290/290（5 个测试文件） |
-| Pipeline 状态 | 96 降尺度 + 48 份额 + 76 图表，全部通过（~720s） |
+| 测试通过 | 293/293（5 个测试文件） |
+| Pipeline 状态 | 96 降尺度 + 48 份额 + 76 图表，全部通过 |
 | 审计完成度 | 代码正确性 ✅ / 官方交叉验证 ✅ / 文献引用 ✅ / 边缘覆盖 ✅ |
-| 已知 Bug 修复 | 14 项（v1: 4 + v3: 10） |
+| 已知 Bug 修复 | 15 项（v1: 4 + v3: 10 + v4: 1） |
 
 ### 已知局限
 
-1. **Kaya γ_c = 1.0 + 0.3×ln(GDP_pcap 比值)**：0.3 系数为校准参数，已有敏感性分析（0.1/0.3/0.5）。已添加 `max(γ, 0.01)` 下限防止极端贫困国（津巴布韦）收敛方向反转。
-2. **Kaya EI 10% 下限**：`max(I_c_t, I_c_2015 × 0.1)` — 有 IEA 数据的国家即使极度收敛，能源强度也不会降到基年的 10% 以下。无 IEA 数据的国家直接使用区域 EI。
+1. **Kaya I_R_target 使用 I_R(2100)**：GCAM 数据仅到 2100，收敛年（2150-2300）的区域 EI 不可用，以 I_R(2100) 代理收敛目标。
+2. **Kaya EI 10% 下限**：`max(I_c_t, I_c_2015 × 0.1)` — 当 b_c < 0 时防止 EI 过零。无 IEA 数据的国家 I_c(2015)=I_R(2015)，产生 a_c=0（平坦 EI）。
 3. **DSCALE ENSHORT 覆盖率 96.6%**：143/148 国有逐国历史回归，5 国回退到 GDP 缩放（瓶颈在 USDA GDP 历史数据，非 TFC 数据）。
 4. **DSCALE MAX_TC 回退值**：2200/2120/2040 三段回退是项目自定义启发式（官方 DSCALE 总能做 ENSHORT 回归，无此需要）。
 5. **DSCALE 收敛 β 来源**：使用 ENLONG β（区域 IAM 回归）而非 ENSHORT β（官方使用），但 ENSHORT β 可用时优先使用。已通过交叉验证测试确认与官方公式一致。
 6. **Kaya/DSCALE 份额计算**：份额在 Logit 空间计算（`compute_kaya_share`/`compute_dscale_share`），保证 ∈ [0,1]，但等比缩放+clip 产生微小守恒偏差（< 1% 区域分子）。Logit 份额使用完整的迭代封顶缩放（守恒完美）。
-7. **E2 相关性 r≈0.85**：Logit-Kaya 2100 年相关性接近 0.85 阈值，由方法间根本数学差异导致。
 
 ### v3 审计中修复的 Bug（10 项）
 
@@ -661,18 +659,23 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 | 9 | 份额指标 Kaya/DSCALE 简单比值法超界（46/35 国 >1.0）→ Logit 空间收敛 | R3 |
 | 10 | `gamma_c` inf/nan 传播 + 极端贫困国负 γ 发散 | R4-R5 |
 
+### v4 修复（1 项）
+
+| # | 修复内容 |
+|---|---------|
+| 11 | Kaya 方法从 φ 乘方公式切换到 van Vuuren 2007 / Gütschow 2021 官方指数插值法 |
+
 ### 测试文件清单
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
 | `test_conservation.py` | ~170 | 区域守恒、单国一致性、份额有界、NaN/负数检测 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、ENLONG 回归 |
-| `test_edge_cases.py` | 35 | gamma_c、phi_kaya、_regional_conserve、mapping、IEA 索引 |
+| `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、_regional_conserve、mapping |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
 | `test_validation_experiments.py` | 40 | 份额有界性（48 项参数化）、单国一致性、ENLONG α 调和 |
 
 ### 后续建议
 
-- **高优先级**：Kaya γ_c 敏感性分析写入论文（已做数值实验）
 - **中优先级**：`compute_logit_share` 中 Africa_Eastern/South America_Northern 收敛警告调查
 - **低优先级**：集成 World Bank WDI 或 Maddison Project GDP 数据以覆盖 ENSHORT 的 5 个缺失国

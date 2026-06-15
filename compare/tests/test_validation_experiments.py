@@ -208,20 +208,21 @@ class TestEnlongAlphaHarmonization:
 # 补充边缘测试（从 test_cross_validate.py 缺口补全）
 # ═══════════════════════════════════════════════════════════
 
-class TestGammaCGuards:
-    """gamma_c 的 inf/nan 防护。"""
+class TestConvergenceGammaGuards:
+    """convergence_gamma edge case guards."""
 
-    def test_inf_gdp_pcap_returns_one(self):
-        from compare.common.downscale import gamma_c
-        assert gamma_c(float("inf"), 100.0) == 1.0
+    def test_large_convergence_year(self):
+        """Very large y_c produces small |gamma|."""
+        from compare.common.downscale import convergence_gamma
+        g = convergence_gamma(3000)
+        assert g < 0
+        assert abs(g) < 0.1
 
-    def test_nan_gdp_pcap_returns_one(self):
-        from compare.common.downscale import gamma_c
-        assert gamma_c(float("nan"), 100.0) == 1.0
-
-    def test_inf_world_pcap_returns_one(self):
-        from compare.common.downscale import gamma_c
-        assert gamma_c(100.0, float("inf")) == 1.0
+    def test_residual_ratio_property(self):
+        """gamma * (y_c - y_h) = ln(d)."""
+        from compare.common.downscale import convergence_gamma, RESIDUAL_RATIO
+        g = convergence_gamma(2200)
+        assert abs(g * (2200 - 2015) - np.log(RESIDUAL_RATIO)) < 1e-12
 
 
 class TestFinalizeDfResidual:

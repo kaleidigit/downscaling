@@ -34,7 +34,9 @@ OTHER_AMERICAS = normalize_name("Other non-OECD Americas")
 OTHER_ASIA = normalize_name("Other non-OECD Asia Oceania")
 AGG_KEYS = {OTHER_AFRICA, OTHER_AMERICAS, OTHER_ASIA}
 
-TC_DEFAULT = {"SSP126": 2070, "SSP245": 2085, "SSP434": 2100, "SSP460": 2100}
+CONVERGENCE_YEAR_DEFAULT = {"SSP126": 2150, "SSP245": 2200, "SSP434": 2300, "SSP460": 2300}
+RESIDUAL_RATIO = 0.01   # d: 99% of gap eliminated by convergence year (Gütschow 2021)
+HISTORICAL_BASE_YEAR = 2015
 
 
 # ═══════════════════════════════════════════════════
@@ -188,25 +190,43 @@ def build_iea_baseline(
 # 方案 A: Kaya 收敛法
 # ═══════════════════════════════════════════════════
 
-def gamma_c(gdp_pcap_2015: float, gdp_pcap_world_2015: float) -> float:
-    """Kaya 收敛速度参数，基于人均 GDP（非总量 GDP）。
+def convergence_gamma(convergence_year: int, base_year: int = HISTORICAL_BASE_YEAR) -> float:
+    """van Vuuren 2007 exponential decay rate: γ = ln(d) / (y_c - y_h)."""
+    if convergence_year <= base_year:
+        return -1.0
+    return np.log(RESIDUAL_RATIO) / (convergence_year - base_year)
 
-    文献: van Vuuren 2007 提出收敛速度与经济水平相关;
-          Gidden 2019 标准化为 CMIP6 排放降尺度方法。
-    0.3 系数: 项目校准参数，未在文献中找到确切出处。
+
+def van_vuuren_ei(
+    year: int,
+    I_c_base: float,
+    I_R_target: float,
+    gamma: float,
+    base_year: int = HISTORICAL_BASE_YEAR,
+) -> float:
+    """van Vuuren 2007 / Gütschow 2021 exponential interpolation for EI.
+
+    EI_c(y) = a_c × exp(γ×(y-y_h)) + b_c
+    Boundary: EI_c(y_h) = I_c_base, EI_c(y_c) ≈ I_R_target (residual d=0.01).
     """
-    if not np.isfinite(gdp_pcap_world_2015) or gdp_pcap_world_2015 <= 0:
-        return 1.0
-    if not np.isfinite(gdp_pcap_2015) or gdp_pcap_2015 <= 0:
-        return 1.0
-    gam = 1.0 + 0.3 * np.log(gdp_pcap_2015 / gdp_pcap_world_2015)
-    return max(gam, 0.01)  # 极端贫困国最低收敛速度，防止负 γ 导致发散
+    if year <= base_year:
+        return I_c_base
+    d = RESIDUAL_RATIO
+    a_c = (I_c_base - I_R_target) / (1 - d)
+    b_c = I_c_base - a_c
+    EI = a_c * np.exp(gamma * (year - base_year)) + b_c
+    return max(EI, 0.0)
 
 
-def phi_kaya(t: int, gamma: float, tc: int) -> float:
-    if t <= 2015:
+def convergence_weight(
+    year: int,
+    gamma: float,
+    base_year: int = HISTORICAL_BASE_YEAR,
+) -> float:
+    """Fraction of convergence completed by year y: w(y) = 1 - exp(γ×(y-y_h))."""
+    if year <= base_year:
         return 0.0
-    return 1.0 - np.exp(-gamma * (t - 2015) / (tc - 2015))
+    return 1.0 - np.exp(gamma * (year - base_year))
 
 
 def downscale_kaya(
@@ -218,14 +238,9 @@ def downscale_kaya(
     mapping = load_mapping()
     members_by_region = build_region_members(mapping)
     gdp_c = read_gdp_country(gdp_country_path(scenario)).set_index("iso")
-    pop_c = read_pop_country(pop_country_path(scenario)).set_index("iso")
     gdp_r = read_gdp_region(gdp_region_path(scenario))
-    tc = TC_DEFAULT.get(scenario, 2100)
-
-    # C1 修复: 使用人均 GDP（非总量 GDP）计算 γ
-    pop_world_2015 = float(pop_c[2015].sum())
-    gdp_world_2015 = float(gdp_c[2015].sum())
-    gdp_pcap_world = gdp_world_2015 / pop_world_2015 if pop_world_2015 > 0 else 1.0
+    y_c = CONVERGENCE_YEAR_DEFAULT.get(scenario, 2300)
+    gamma = convergence_gamma(y_c)
 
     iso_info = _build_iso_info(mapping)
     gcam_scen = gcam[gcam["Scenario"] == scenario]
@@ -247,29 +262,28 @@ def downscale_kaya(
             gdp_val = float(r_gdp[y].iloc[0]) if y in r_gdp.columns else 0.0
             I_R[y] = gcam_val / gdp_val if gdp_val > 0 else 0.0
 
+        I_R_target = I_R.get(2100, 0.0)
+
         projections: dict[str, dict[int, float]] = {iso: {} for iso in region_isos}
         for iso in region_isos:
             e_base = iea_baseline.get(iso, 0.0)
             g_2015 = float(gdp_c.loc[iso, 2015]) if iso in gdp_c.index else 0.0
-            p_2015 = float(pop_c.loc[iso, 2015]) if iso in pop_c.index else 1.0
             I_c_2015 = e_base / g_2015 if g_2015 > 0 else 0.0
-            gdp_pcap_2015 = g_2015 / p_2015 if p_2015 > 0 else 0.0
-            gam = gamma_c(gdp_pcap_2015, gdp_pcap_world)
+
+            # 无 IEA 基准: 使用区域 EI (a_c=0, b_c=I_R(2015))
+            if I_c_2015 <= 0:
+                I_c_2015 = I_R.get(2015, 0.0)
 
             for y in YEARS:
                 g_c_y = float(gdp_c.loc[iso, y]) if iso in gdp_c.index and y in gdp_c.columns else 0.0
                 if y == 2015:
-                    I_c_t = I_c_2015 if I_c_2015 > 0 else I_R.get(y, 0.0)
-                elif I_c_2015 > 0:
-                    phi_t = phi_kaya(y, gam, tc)
-                    ratio = I_R.get(y, 0.0) / I_R.get(2015, 1.0) if I_R.get(2015, 0) > 0 else 1.0
-                    I_c_t = I_c_2015 * (ratio ** phi_t)
-                    # L1: 有 IEA 基准的小国 EI 不低于基年 EI 的 10%
+                    I_c_t = I_c_2015
+                elif y >= y_c:
+                    I_c_t = I_R.get(y, 0.0)
+                else:
+                    I_c_t = van_vuuren_ei(y, I_c_2015, I_R_target, gamma)
                     if I_c_t < I_c_2015 * 0.1:
                         I_c_t = I_c_2015 * 0.1
-                else:
-                    # L1 fix: 无 IEA 基准的国家，始终使用区域 EI（与 2015 年一致）
-                    I_c_t = I_R.get(y, 0.0)
                 projections[iso][y] = I_c_t * g_c_y
 
         _regional_conserve(projections, region_isos, g_row, n_r)
@@ -758,11 +772,10 @@ def compute_kaya_share(
     max_iter: int = 50,
     tol: float = 1e-6,
 ) -> pd.DataFrame:
-    """Kaya 收敛法在 Logit 空间：L_c(t) = L_c(2015) + φ_Kaya(t) × ΔL_R(t)。
+    """van Vuuren exponential convergence in Logit space.
 
-    阶段 1-3 与 compute_logit_share 相同，仅阶段 2 用 Kaya φ 函数
-    替换了完整的 ΔL 叠加。保留了 Kaya 的逐国收敛速度差异，
-    同时天然保证份额 ∈ [0,1]。
+    L_c(t) = L_c(2015) + w(t) × ΔL_R(t)
+    w(t) = 1 - exp(γ×(t-2015)) is the convergence weight from van Vuuren method.
     """
     mapping = load_mapping()
     members_by_region = build_region_members(mapping)
@@ -770,13 +783,8 @@ def compute_kaya_share(
     gcam_num_scen = gcam_num[gcam_num["Scenario"] == scenario]
     gcam_den_scen = gcam_den[gcam_den["Scenario"] == scenario]
 
-    # Kaya 参数
-    tc = TC_DEFAULT.get(scenario, 2100)
-    gdp_c = read_gdp_country(gdp_country_path(scenario)).set_index("iso")
-    pop_c = read_pop_country(pop_country_path(scenario)).set_index("iso")
-    pop_world_2015 = float(pop_c[2015].sum())
-    gdp_world_2015 = float(gdp_c[2015].sum())
-    gdp_pcap_world = gdp_world_2015 / pop_world_2015 if pop_world_2015 > 0 else 1.0
+    y_c = CONVERGENCE_YEAR_DEFAULT.get(scenario, 2300)
+    gamma = convergence_gamma(y_c)
 
     rows_out = []
     for _, g_row_num in gcam_num_scen.iterrows():
@@ -810,24 +818,17 @@ def compute_kaya_share(
         L_R_2015 = L_R.get(2015, 0.0)
         delta_L_R: dict[int, float] = {y: L_R[y] - L_R_2015 for y in YEARS}
 
-        # 阶段 2：Kaya φ 缩放的 Logit 趋势
+        # 阶段 2：van Vuuren convergence weight in Logit space
         S_proj: dict[str, dict[int, float]] = {}
         for iso in region_isos:
-            g_2015 = float(gdp_c.loc[iso, 2015]) if iso in gdp_c.index else 0.0
-            p_2015 = float(pop_c.loc[iso, 2015]) if iso in pop_c.index else 1.0
-            gdp_pcap_2015 = g_2015 / p_2015 if p_2015 > 0 else 0.0
-            gam = gamma_c(gdp_pcap_2015, gdp_pcap_world)
-
             S_proj[iso] = {}
             L_c = L_c_2015.get(iso, 0.0)
             for y in YEARS:
-                phi_t = phi_kaya(y, gam, tc)
-                L_proj = L_c + phi_t * delta_L_R.get(y, 0.0)
+                w_t = convergence_weight(y, gamma)
+                L_proj = L_c + w_t * delta_L_R.get(y, 0.0)
                 S_proj[iso][y] = 1.0 / (1.0 + np.exp(-L_proj))
 
-        # 阶段 3：Simple proportional scaling to match GCAM numerator.
-        # Shares are [0,1]-bounded via sigmoid, but scaling k can push them
-        # slightly out of bounds. Clip + accept tiny conservation deviation.
+        # 阶段 3：proportional scaling to match GCAM numerator
         for y in YEARS:
             target = float(g_row_num.get(y, 0) or 0)
             E_c: dict[str, float] = {}

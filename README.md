@@ -54,13 +54,15 @@
 | `P_R(t)` | 区域 R 的人口总和 |
 | `I_c(t)` | 能源强度 `E_c(t) / G_c(t)` |
 | `I_R(t)` | 区域能源强度 `E_R(t) / G_R(t)` |
-| `t_0` | 基年 2015 |
+| `γ` | 收敛衰减率 = ln(d)/(y_c−y_h) |
+| `d` | 残差比率 = 0.01 |
+| `y_c` | 收敛完成年份 |
 
 ---
 
 ### 方案 A：Kaya 收敛法（`kaya`）
 
-**核心思想**：国家能源强度向区域轨迹按条件速度收敛。富国收敛快，穷国收敛慢。
+**核心思想**：国家能源强度通过指数插值收敛到区域能源强度。基于 van Vuuren 2007 / Gütschow 2021 标准方法。
 
 #### 计算步骤
 
@@ -70,51 +72,46 @@ I_c(2015) = E_c^IEA / G_c(2015)
 I_R(t)    = E_R(t) / G_R(t)
 ```
 
-**Step 2 — 收敛速度参数（逐国调整）**
+**Step 2 — van Vuuren 指数插值收敛**
 ```
-γ_c = 1.0 + 0.3 × ln(GDP_pcap_c / GDP_pcap_world)
-```
-- γ_c > 1：人均 GDP 高于世界均值，收敛快
-- γ_c < 1：人均 GDP 低于世界均值，收敛慢
-- γ_c 下限 0.01，防止极端贫困国收敛方向反转
-- 0.3 系数：项目校准参数（已做 [0.1, 0.3, 0.5] 敏感性分析）
+d = 0.01                                     # 残差比率，99%差距在收敛年消除 (Gütschow 2021)
+γ = ln(d) / (y_c − y_h)                      # 负值，情景统一的指数衰减率
+y_h = 2015                                    # 历史基年
+y_c = {SSP126: 2150, SSP245: 2200, SSP434: 2300, SSP460: 2300}
 
-**Step 3 — 条件收敛权重**
+EI_c(y) = a_c × exp(γ×(y−y_h)) + b_c         # 指数插值
 ```
-φ(c,t) = 0                                              (t ≤ 2015)
-φ(c,t) = 1 − exp(−γ_c × (t−2015) / (t_c−2015))         (t > 2015)
+边界条件：EI_c(y_h) = I_c(2015)，EI_c(y_c) ≈ I_R_target（残差 d=1%）
 ```
-- t_c（收敛完成年份）：SSP126=2070, SSP245=2085, SSP434=2100, SSP460=2100
-- φ=0 时国家保持基年 EI，φ→1 时追踪区域 EI 趋势（渐进收敛）
-- 与文献 van Vuuren 2007（`a_c×e^(γ·y)+b_c`, d=0.01, 收敛年 2150-2300）公式结构不同
+a_c = (I_c(2015) − I_R_target) / (1 − d)
+b_c = I_c(2015) − a_c
+I_R_target = I_R(2100)                        # GCAM仅到2100，收敛年均在其后
+```
+- 收敛年后 (y ≥ y_c): EI_c(y) = I_R(y)
+- EI 下限: max(EI_c(y), 0), max(EI_c(y), I_c(2015) × 0.1)
+- 无 IEA 基准国家: I_c(2015) = I_R(2015)，则 a_c=0, EI 保持平坦
 
-**Step 4 — 能源强度收敛**
+**Step 3 — 能源消费**
 ```
-I_c(t) = I_c(2015) × [I_R(t) / I_R(2015)] ^ φ(c,t)
-```
-- EI 下限：`max(I_c(t), I_c(2015) × 0.1)`（有 IEA 数据的国家）
-- 无 IEA 数据的国家直接使用区域 EI：`I_c(t) = I_R(t)`
-
-**Step 5 — 能源消费**
-```
-E_c_proj(t) = I_c(t) × G_c(t)
+E_c_proj(t) = EI_c(t) × G_c(t)
 ```
 
-**Step 6 — 区域守恒校准**
+**Step 4 — 区域守恒校准**
 ```
 E_c_final(t) = [E_c_proj(t) / Σ_k E_k_proj(t)] × E_R(t)    (k ∈ 区域 R)
 ```
 
-**份额指标处理**：份额类指标（化石份额、可再生份额等）在 Logit 变换空间应用相同 φ(t) 收敛权重，天然保证 ∈ [0,1]。
+**份额指标处理**：份额类指标在 Logit 变换空间应用收敛权重 w(t) = 1 − exp(γ×(t−y_h))，天然保证 ∈ [0,1]。
 
 #### 关键参数
 
 | 参数 | 值 | 来源 |
 |------|---|------|
-| γ_c 系数 | 0.3 | 项目校准，非文献值 |
-| γ_c 下限 | 0.01 | 防止极端贫困国负 γ |
-| t_c | SSP126=2070, 245=2085, 434=2100, 460=2100 | 项目推断（文献值 2150-2300） |
-| EI 下限 | 基年 EI × 0.1 | 项目自定义 |
+| d (残差比率) | 0.01 | Gütschow 2021 |
+| y_c (收敛年) | 2150/2200/2300/2300 | Gütschow 2021 |
+| γ (衰减率) | ln(0.01)/(y_c−2015) | van Vuuren 2007 |
+| I_R_target | I_R(2100) | 数据限制（GCAM仅到2100）|
+| EI 下限 | 基年 EI × 0.1 | 安全阈值 |
 
 ---
 
@@ -237,8 +234,8 @@ S_c(t) = 1 / (1 + exp(−L_c(t)))               (sigmoid 逆变换)
 
 对于份额指标（fossil_share, renewable_share, electrification_rate, green_elec_share），Kaya 和 DSCALE 方法同样使用 Logit 空间变换，但用各自收敛权重替代阶段 2 的完整 ΔL 叠加：
 
-- **Kaya**：`L_c(t) = L_c(2015) + φ_Kaya(t) × ΔL_R(t)` （implemented in `compute_kaya_share()`）
-- **DSCALE**：`L_c(t) = ENSHORT_L × CONV_WEIGHT + ENLONG_L × (1−CONV_WEIGHT)` （implemented in `compute_dscale_share()`）
+- **Kaya**：`L_c(t) = L_c(2015) + w(t) × ΔL_R(t)`，w(t) = 1 − exp(γ×(t−y_h))（implemented in `compute_kaya_share()`）
+- **DSCALE**：`L_c(t) = ENSHORT_L × CONV_WEIGHT + ENLONG_L × (1−CONV_WEIGHT)`（implemented in `compute_dscale_share()`）
 
 然后用 sigmoid + 等比缩放 + clip 得到最终份额。保留了方法间收敛动力学差异，同时天然保证份额 ∈ [0,1]。
 
@@ -286,14 +283,14 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 ## 测试
 
 ```bash
-uv run python -m pytest compare/tests/ -q   # 290 测试，全部通过
+uv run python -m pytest compare/tests/ -q   # 293 测试，全部通过
 ```
 
 | 文件 | 测试数 | 覆盖 |
 |------|--------|------|
 | `test_conservation.py` | ~170 | 区域守恒（含 GCAM 对比）、单国一致性、份额有界、NaN/负数检测 |
-| `test_cross_validate.py` | 24 | 官方 DSCALE 公式逐元素对比（非自指验证） |
-| `test_edge_cases.py` | 35 | gamma_c、phi_kaya、mapping、IEA 索引边缘情况 |
+| `test_cross_validate.py` | 24 | 官方 DSCALE 公式逐元素对比 |
+| `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、mapping |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
 | `test_validation_experiments.py` | 40 | 份额有界性实验、单国一致性实验、ENLONG α 调和实验 |
 
@@ -304,7 +301,7 @@ uv run python -m pytest compare/tests/ -q   # 290 测试，全部通过
 ```
 downscaling/
 ├── README.md                     # 本文件
-├── AUDIT.md                      # v3 审计报告（14 项 Bug 修复）
+├── AUDIT.md                      # v4 审计报告（15 项 Bug 修复）
 ├── CLAUDE.md                     # 详细数据规格与代码规范
 ├── pyproject.toml                # uv 环境配置
 ├── data/                         # 输入数据
@@ -325,7 +322,7 @@ downscaling/
 │   ├── dscale/                   # 方案 B: DSCALE 官方适配层
 │   │   ├── dscale_official.py    # ENLONG/ENSHORT/收敛/MAX_TC
 │   │   └── downscale_tfc.py      # TFC 专用入口（含 ENSHORT 历史回归）
-│   ├── tests/                    # 5 个测试文件，290 测试
+│   ├── tests/                    # 5 个测试文件，293 测试
 │   ├── output/                   # 所有输出（gitignored）
 │   ├── run_all.py                # 一键运行（支持 N_JOBS 并行）
 │   └── compare_results.py        # 对比可视化
@@ -342,7 +339,7 @@ downscaling/
 
 ## 审计状态
 
-v3（2026-06-09）：五轮递进审计完成。14 项 Bug 修复。290 测试全部通过。全量 pipeline（96+48+76）通过。详见 `AUDIT.md` 和 `CLAUDE.md §11`。
+v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。15 项 Bug 修复。293 测试全部通过。详见 `AUDIT.md`。
 
 ---
 

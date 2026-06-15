@@ -1,6 +1,6 @@
 """边缘情况单元测试。
 
-覆盖 gamma_c、phi_kaya、_regional_conserve、零方差 ENSHORT 等关键边缘情况。
+覆盖 convergence_gamma、van_vuuren_ei、convergence_weight、_regional_conserve 等关键边缘情况。
 """
 
 import numpy as np
@@ -8,12 +8,14 @@ import pandas as pd
 import pytest
 
 from compare.common.downscale import (
-    gamma_c,
-    phi_kaya,
+    convergence_gamma,
+    van_vuuren_ei,
+    convergence_weight,
     _regional_conserve,
     _region_isos,
     _finalize_df,
-    TC_DEFAULT,
+    CONVERGENCE_YEAR_DEFAULT,
+    RESIDUAL_RATIO,
 )
 from compare.common.mapping import (
     normalize_name,
@@ -25,102 +27,160 @@ from compare.common.config import YEARS
 
 
 # ═══════════════════════════════════════════════════════════
-# gamma_c
+# convergence_gamma
 # ═══════════════════════════════════════════════════════════
 
-class TestGammaC:
-    def test_average_country_returns_one(self):
-        """人均 GDP 等于世界平均 → gamma=1.0。"""
-        assert gamma_c(100.0, 100.0) == 1.0
+class TestConvergenceGamma:
+    def test_ssp126_gamma_is_negative(self):
+        """SSP126 (y_c=2150): gamma = ln(0.01)/(2150-2015) < 0."""
+        g = convergence_gamma(2150)
+        assert g < 0
 
-    def test_rich_country_returns_above_one(self):
-        """人均 GDP 是世界平均的 10 倍 → gamma > 1。"""
-        g = gamma_c(1000.0, 100.0)
-        assert g > 1.0
-        assert abs(g - (1.0 + 0.3 * np.log(10.0))) < 1e-12
+    def test_ssp245_abs_less_than_ssp126(self):
+        """SSP245 (y_c=2200) converges slower → |gamma| smaller."""
+        g126 = convergence_gamma(2150)
+        g245 = convergence_gamma(2200)
+        assert abs(g126) > abs(g245)
 
-    def test_poor_country_returns_below_one(self):
-        """人均 GDP 是世界平均的 1/10 → gamma < 1。"""
-        g = gamma_c(10.0, 100.0)
-        assert g < 1.0
-        assert abs(g - (1.0 + 0.3 * np.log(0.1))) < 1e-12
+    def test_gamma_formula_exact(self):
+        """gamma = ln(0.01) / (y_c - 2015)."""
+        g = convergence_gamma(2200)
+        expected = np.log(0.01) / (2200 - 2015)
+        assert abs(g - expected) < 1e-12
 
-    def test_zero_gdp_pcap_returns_one(self):
-        """人均 GDP 为零 → gamma=1.0（防御值）。"""
-        assert gamma_c(0.0, 100.0) == 1.0
+    def test_degenerate_convergence_year(self):
+        """y_c = 2015: degenerate, gamma = -1.0."""
+        assert convergence_gamma(2015) == -1.0
 
-    def test_zero_world_pcap_returns_one(self):
-        """世界人均 GDP 为零 → gamma=1.0。"""
-        assert gamma_c(100.0, 0.0) == 1.0
-
-    def test_both_zero_returns_one(self):
-        assert gamma_c(0.0, 0.0) == 1.0
-
-    def test_negative_gdp_returns_one(self):
-        assert gamma_c(-50.0, 100.0) == 1.0
-
-    def test_extremely_poor_country_floor(self):
-        """极端贫困国（GDP_pcap < 3.6% 世界均值）→ gamma 不低于 0.01。"""
-        g = gamma_c(1.0, 100.0)  # 1% of world avg
-        assert g >= 0.01
-        assert g > 0  # 不应为负（防止收敛方向反转）
+    def test_y_c_before_base_year(self):
+        """y_c < 2015: degenerate, gamma = -1.0."""
+        assert convergence_gamma(2000) == -1.0
 
 
 # ═══════════════════════════════════════════════════════════
-# phi_kaya
+# van_vuuren_ei
 # ═══════════════════════════════════════════════════════════
 
-class TestPhiKaya:
-    def test_at_2015_returns_zero(self):
-        """t=2015 → phi=0（基年无收敛）。"""
-        assert phi_kaya(2015, 2.0, 2070) == 0.0
+class TestVanVuurenEI:
+    def test_base_year_returns_base_ei(self):
+        """y=2015 returns I_c_2015."""
+        I = van_vuuren_ei(2015, 5.0, 2.0, convergence_gamma(2200))
+        assert abs(I - 5.0) < 1e-12
 
-    def test_before_2015_returns_zero(self):
-        """t<2015 → phi=0。"""
-        assert phi_kaya(2010, 2.0, 2070) == 0.0
+    def test_before_base_year_returns_base_ei(self):
+        """y<2015 returns I_c_2015."""
+        I = van_vuuren_ei(2010, 5.0, 2.0, convergence_gamma(2200))
+        assert abs(I - 5.0) < 1e-12
 
-    def test_at_convergence_year(self):
-        """t=tc → phi = 1 - exp(-gamma)。"""
-        phi = phi_kaya(2070, 1.0, 2070)
-        expected = 1.0 - np.exp(-1.0)
-        assert abs(phi - expected) < 1e-12
+    def test_converging_country_ei_decreases(self):
+        """Country with I_c > I_R_target: EI decreases toward target."""
+        I_c = 10.0
+        I_R_target = 2.0
+        gamma = convergence_gamma(2200)
+        I_2020 = van_vuuren_ei(2020, I_c, I_R_target, gamma)
+        I_2050 = van_vuuren_ei(2050, I_c, I_R_target, gamma)
+        I_2100 = van_vuuren_ei(2100, I_c, I_R_target, gamma)
+        assert I_2020 > I_2050 > I_2100
+        assert I_2100 > I_R_target  # not yet fully converged by 2100
 
-    def test_after_convergence_year(self):
-        """t > tc → phi → 1.0（但永远不完全到达）。"""
-        phi = phi_kaya(2100, 2.0, 2070)
-        assert 0.9 < phi < 1.0
+    def test_already_converged_country(self):
+        """I_c_2015 = I_R_target: a_c=0, EI = b_c = I_c (constant)."""
+        I_c = 2.0
+        I_R_target = 2.0
+        gamma = convergence_gamma(2200)
+        for y in [2020, 2050, 2100]:
+            I = van_vuuren_ei(y, I_c, I_R_target, gamma)
+            assert abs(I - I_c) < 1e-12
 
-    def test_large_gamma_fast_convergence(self):
-        """大 gamma → phi 更快接近 1。"""
-        phi_low = phi_kaya(2050, 1.0, 2100)
-        phi_high = phi_kaya(2050, 5.0, 2100)
-        assert phi_high > phi_low
+    def test_negative_b_c_floor_at_zero(self):
+        """When I_c < I_R_target * d, b_c < 0; EI must not go negative."""
+        I_c = 0.001
+        I_R_target = 5.0
+        gamma = convergence_gamma(2200)
+        for y in YEARS:
+            I = van_vuuren_ei(y, I_c, I_R_target, gamma)
+            assert I >= 0.0, f"EI negative at y={y}: {I}"
 
-    def test_monotonic_in_time(self):
-        """phi 随时间单调递增。"""
-        vals = [phi_kaya(t, 2.0, 2070) for t in [2015, 2030, 2050, 2070, 2100]]
-        for i in range(len(vals) - 1):
-            assert vals[i] <= vals[i + 1]
+    def test_monotonic_convergence(self):
+        """For I_c > I_R_target: EI monotonically decreasing."""
+        I_c = 8.0
+        I_R_target = 2.0
+        gamma = convergence_gamma(2200)
+        prev = I_c
+        for y in YEARS:
+            I = van_vuuren_ei(y, I_c, I_R_target, gamma)
+            assert I <= prev + 1e-12, f"Non-monotonic at y={y}"
+            prev = I
+
+    def test_exact_boundary_conditions(self):
+        """a_c + b_c = I_c_2015, a_c*d + b_c = I_R_target."""
+        I_c = 6.0
+        I_R_target = 2.0
+        d = RESIDUAL_RATIO
+        a_c = (I_c - I_R_target) / (1 - d)
+        b_c = I_c - a_c
+        assert abs(a_c + b_c - I_c) < 1e-12
+        assert abs(a_c * d + b_c - I_R_target) < 1e-12
 
 
 # ═══════════════════════════════════════════════════════════
-# TC_DEFAULT
+# convergence_weight
 # ═══════════════════════════════════════════════════════════
 
-class TestTCDefault:
-    def test_all_scenarios_have_tc(self):
+class TestConvergenceWeight:
+    def test_base_year_returns_zero(self):
+        """y=2015 → w=0."""
+        assert convergence_weight(2015, convergence_gamma(2200)) == 0.0
+
+    def test_before_base_year_returns_zero(self):
+        """y<2015 → w=0."""
+        assert convergence_weight(2010, convergence_gamma(2200)) == 0.0
+
+    def test_increases_over_time(self):
+        """w increases with time."""
+        gamma = convergence_gamma(2200)
+        vals = [convergence_weight(y, gamma) for y in [2020, 2050, 2100]]
+        assert vals[0] < vals[1] < vals[2]
+
+    def test_approaches_1_minus_d(self):
+        """w(y_c) ≈ 1 - d = 0.99."""
+        gamma = convergence_gamma(2200)
+        w = convergence_weight(2200, gamma)
+        assert abs(w - 0.99) < 1e-6
+
+    def test_never_exceeds_one(self):
+        """w < 1 for all finite years."""
+        gamma = convergence_gamma(2200)
+        for y in YEARS:
+            assert convergence_weight(y, gamma) < 1.0
+
+
+# ═══════════════════════════════════════════════════════════
+# CONVERGENCE_YEAR_DEFAULT
+# ═══════════════════════════════════════════════════════════
+
+class TestConvergenceYearDefault:
+    def test_all_scenarios_have_convergence_year(self):
         for sc in ["SSP126", "SSP245", "SSP434", "SSP460"]:
-            assert sc in TC_DEFAULT
+            assert sc in CONVERGENCE_YEAR_DEFAULT
 
-    def test_tc_values_are_increasing(self):
-        """更可持续的情景应有更晚的收敛年份。"""
-        assert TC_DEFAULT["SSP126"] <= TC_DEFAULT["SSP245"]
-        assert TC_DEFAULT["SSP245"] <= TC_DEFAULT["SSP434"]
-        assert TC_DEFAULT["SSP434"] <= TC_DEFAULT["SSP460"]
+    def test_convergence_years_increasing(self):
+        """More sustainable scenarios converge earlier."""
+        assert CONVERGENCE_YEAR_DEFAULT["SSP126"] <= CONVERGENCE_YEAR_DEFAULT["SSP245"]
+        assert CONVERGENCE_YEAR_DEFAULT["SSP245"] <= CONVERGENCE_YEAR_DEFAULT["SSP434"]
+        assert CONVERGENCE_YEAR_DEFAULT["SSP434"] <= CONVERGENCE_YEAR_DEFAULT["SSP460"]
 
-    def test_tc_values_in_valid_range(self):
-        for tc in TC_DEFAULT.values():
-            assert 2000 < tc <= 2100
+    def test_convergence_years_beyond_2100(self):
+        """All convergence years beyond projection period."""
+        for y_c in CONVERGENCE_YEAR_DEFAULT.values():
+            assert y_c > 2100
+
+    def test_matches_gutschow_2021(self):
+        """Convergence years match Gütschow 2021 ESSD."""
+        assert CONVERGENCE_YEAR_DEFAULT["SSP126"] == 2150
+        assert CONVERGENCE_YEAR_DEFAULT["SSP245"] == 2200
+        assert CONVERGENCE_YEAR_DEFAULT["SSP434"] == 2300
+        assert CONVERGENCE_YEAR_DEFAULT["SSP460"] == 2300
 
 
 # ═══════════════════════════════════════════════════════════
@@ -232,7 +292,6 @@ class TestMapping:
         assert normalize_name(None) == ""
 
     def test_normalize_name_removes_accents(self):
-        # normalize_name 移除变音符号并删除空格等特殊字符
         result = normalize_name("Côte d'Ivoire")
         assert "cote" in result
         assert "divoire" in result
@@ -270,5 +329,4 @@ class TestIeaNameIndex:
     def test_china_in_index(self):
         from compare.common.io import _build_iea_name_index
         idx = _build_iea_name_index()
-        # China should be mappable
         assert any("china" in k for k in idx), "China not found in IEA name index"

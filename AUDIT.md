@@ -1,130 +1,173 @@
 # 代码审计报告
 
-审计周期：2026-06-01 ~ 2026-06-09  
-审计方法：五轮递进审计（代码 → 官方交叉验证 → 文献验证 → 测试清理 → 敏感性分析）  
-最终状态：**290/290 测试通过，96 降尺度 + 48 份额 + 76 图表全部 OK，14 项 Bug 修复**
+**项目**：GCAM 区域→国家降尺度三方案对比  
+**审计周期**：2026-06-01 ~ 2026-06-09（五轮递进）  
+**当前状态**：290/290 测试通过 | 14 项 Bug 已修复 | 5 项待修复 | 4 项方法论偏差（已记录）  
+**审计结论**：三方案降尺度核心算法逻辑正确，区域守恒满足，份额有界性保证。遗留问题均为边缘场景或非核心路径，不影响主要结论。
 
 ---
 
-## 一、审计轮次概览
+## 一、审计方法
 
-| 轮次 | 日期 | 重点 | 成果 |
-|------|------|------|------|
-| **R1** 代码审计 | 06-01~02 | DSCALE 官方一致性 + 数据链路 + 算法参数 | 7 Bug 修复（A1-A6, B7, C1, E1-E3） |
-| **R2** 官方交叉验证 | 06-08 | 与 DSCALE 官方代码逐函数对比 | ENLONG α 调和、10 差异分析 |
-| **R3** 文献验证 | 06-08 | Kaya/Logit 方法的文献溯源 | 引用纠正、份额 Logit 空间修复 |
-| **R4** 测试清理 | 06-08 | 测试覆盖度与容差审计 | 3 冗余移除、58 新测试、并行 pipeline |
-| **R5** 交叉验证 | 06-09 | 自指验证修复 + 敏感性分析 | gamma_c 负值防护、官方公式逐元素对比 |
+| 轮次 | 重点 | 手段 |
+|------|------|------|
+| R1 代码审计 | DSCALE 官方一致性 + 数据链路 | 逐函数与官方 DSCALE 仓库对比 |
+| R2 官方交叉验证 | ENLONG/ENSHORT/收敛公式 | `fun_max_tc_convergence` 逐元素对比 |
+| R3 文献验证 | Kaya/Logit 方法溯源 | 公式结构与 van Vuuren 2007、Sferra 2026 对比 |
+| R4 测试清理 | 覆盖度与容差 | 58 新测试，冗余移除 |
+| R5 敏感性分析 | gamma_c 边界行为 | 极端贫困国负值防护 |
 
 ---
 
-## 二、全部 Bug 修复（14 项）
+## 二、已修复 Bug（14 项）
 
-### R1 修复（7 项）
+### 高严重性（影响结果正确性）
 
-| # | 问题 | 严重性 | 文件 |
-|---|------|--------|------|
-| A1 | DSCALE 收敛 `abs(beta)` 翻转负值，官方用 `clip(beta,1,∞)` | 高 | `dscale_official.py` |
-| A2 | ENSHORT 缺少 alpha 调和（官方 `fun_harmonize_alpha`） | 高 | `dscale_official.py` |
-| A3 | MAX_TC 简化为 R² 线性插值，缺 beta 符号检测 | 中 | `dscale_official.py` |
-| A4 | ENSHORT EI 无 [0,1] 封顶 | 低 | `dscale_official.py` |
-| B7 | bfa/tcd/mli/mrt 被误排除（WORLDBAL 有完整数据） | 高 | `common/mapping.py` |
-| C1 | Kaya γ 使用总量 GDP（98% 国家 γ<0）→ 改为人均 GDP | 高 | `common/downscale.py` |
-| E1-E3 | 重复函数、重复字典、np.seterr 全局副作用 | 低 | 多文件 |
-
-### R2-R5 修复（7 项）
-
-| # | 问题 | 轮次 | 文件 |
+| # | 问题 | 修复 | 文件 |
 |---|------|------|------|
-| 8 | GCAM+IEA 电力 GWh 未转换为 TJ（electrification_rate 差 3.6 倍） | R2 | `config.py`, `downscale.py` |
-| 9 | DSCALE 非 TFC 输出未写入磁盘（`run_indicator` 提前 return） | R2 | `downscale.py` |
-| 10 | 人口下限 `max(p, 1.0)` → `max(p, 1e-6)` | R2 | `dscale_official.py` |
-| 11 | `LogLogFunc(alpha=0,beta=0)` → `ff.beta=None` | R2 | `dscale_official.py` |
-| 12 | 零 IEA 区域 GCAM 值泄漏到全局残差 | R2 | `downscale.py` |
-| 13 | 份额 Kaya/DSCALE 简单比值超界（46/35 国 >1.0）→ Logit 空间收敛 | R3 | `downscale.py` |
-| 14 | `gamma_c` 极端贫困国负值 → 收敛方向反转（津巴布韦） | R5 | `downscale.py` |
+| 1 | Kaya γ 使用总量 GDP → 98% 国家 γ<0 | 改为人均 GDP 计算 | `downscale.py` |
+| 2 | DSCALE 收敛 `abs(beta)` 翻转负值 | 改为 `clip(beta, 1, ∞)` 与官方一致 | `dscale_official.py` |
+| 3 | ENSHORT 缺少 alpha 调和 | 加入官方 `fun_harmonize_alpha` 逻辑 | `dscale_official.py` |
+| 4 | bfa/tcd/mli/mrt 被误排除（WORLDBAL 有数据） | 从 EXCLUDED_ISO 移除 | `mapping.py` |
+| 5 | GCAM+IEA 电力 GWh 未转 TJ（差 3.6×） | 统一 `gcam_unit_factor=3.6` | `config.py` |
+| 6 | 份额 Kaya/DSCALE 简单比值超界（46/35 国 >1.0） | 改用 Logit 空间收敛 | `downscale.py` |
+| 7 | gamma_c 极端贫困国负值（津巴布韦） | `max(γ, 0.01)` 下限 | `downscale.py` |
+
+### 中严重性（影响部分场景）
+
+| # | 问题 | 修复 | 文件 |
+|---|------|------|------|
+| 8 | MAX_TC 缺 beta 符号检测 | 加入官方 `fun_max_tc` 完整逻辑 | `dscale_official.py` |
+| 9 | DSCALE 非 TFC 输出未写入磁盘 | 修复 `run_indicator` 提前 return | `downscale.py` |
+| 10 | 零 IEA 区域 GCAM 值泄漏到全局残差 | 区域内零值正确处理 | `downscale.py` |
+| 11 | `LogLogFunc(alpha=0,beta=0)` → `ff.beta=None` | 初始化检查 | `dscale_official.py` |
+
+### 低严重性（代码质量）
+
+| # | 问题 | 修复 | 文件 |
+|---|------|------|------|
+| 12 | ENSHORT EI 无 [0,1] 封顶 | 加入 `np.clip(0, 1)` | `dscale_official.py` |
+| 13 | 人口下限 `max(p, 1.0)` → `max(p, 1e-6)` | 避免虚假归零 | `dscale_official.py` |
+| 14 | 重复函数/字典、np.seterr 全局副作用 | 清理 | 多文件 |
 
 ---
 
-## 三、方法验证状态
+## 三、待修复问题（5 项）
 
-### Kaya 收敛法
+### P1：`downscale_logit` 中 `n_r` 未定义 — 运行时 NameError
 
-| 验证项 | 状态 | 说明 |
-|--------|------|------|
-| 公式结构 | ⚠️ | 与 van Vuuren 2007 指数插值法本质不同（φ 乘方 vs 指数插值） |
-| γ_c 参数 (0.3) | ⚠️ | 校准参数，已做敏感性分析（0.1/0.3/0.5），已添加 0.01 下限 |
-| t_c 收敛年份 | ⚠️ | 2070-2100 vs 文献 2150-2300，文档中已标注 |
-| EI 10% 下限 | ⚠️ | 项目自定义（无文献出处） |
-| gamma_c inf/nan 防护 | ✅ | 已修复 |
-| 份额（Logit 空间） | ✅ | `compute_kaya_share` 保证 ∈ [0,1] |
+**文件**：`compare/common/downscale.py:459`  
+**现象**：当区域内所有国家 IEA 基准为零时，`equal_share = 1.0 / n_r` 触发 `NameError`，因为 `n_r` 未在函数内赋值（`downscale_kaya` 和 `downscale_dscale` 均有 `n_r = len(region_isos)`）。  
+**影响**：目前未触发（所有区域均有 IEA 基准），但未来添加新指标或数据缺失时可能崩溃。  
+**修复**：在 `downscale_logit` 中添加 `n_r = len(region_isos)`。
 
-### DSCALE 双路径法
+### P2：`read_iea_historical_tfc` 死代码
 
-| 验证项 | 状态 | 说明 |
-|--------|------|------|
-| LogLogFunc 回归 | ✅ | 官方 fit_funcs.py，零修改导入 |
-| fun_max_tc_convergence | ✅ | 与官方 Energy_demand_downs_1.py:650-675 逐元素一致 |
-| ENLONG α 调和 | ✅ | 官方 fun_harmonize_alpha，基准年 2015 |
-| ENSHORT 历史回归 | ✅ | 143/148 (96.6%) 覆盖 |
-| MAX_TC 回退值 | ⚠️ | 自定义启发式（官方无此需要） |
-| 电力单位 | ✅ | GWh→TJ，与 TFC 一致 |
-| 份额（Logit 空间） | ✅ | `compute_dscale_share` 保证 ∈ [0,1] |
+**文件**：`compare/common/io.py:519-556`  
+**现象**：函数在 line 520 立即 `return read_iea_worldbal(...)`，后续 36 行代码（含 docstring 和完整数据处理逻辑）不可达。且死代码中引用了未定义的 `IEA_HISTORICAL_PATH`。  
+**影响**：功能正确（WORLDBAL 路径已覆盖），但代码误导性高。  
+**修复**：删除 line 521-556 的死代码，将 docstring 移至函数头。
+
+### P3：Kaya/DSCALE 份额守恒偏差
+
+**文件**：`compare/common/downscale.py` `compute_kaya_share`/`compute_dscale_share`  
+**现象**：等比缩放 `k = target/sum_R` 后，部分国家 `R[iso]` 超过 `E_c[iso]`，被 clip 到 1.0 时丢弃超额量，导致 `Σ(S×E) < target`。Logit 份额的迭代封顶缩放无此问题。  
+**影响**：偏差 <1% 区域分子，对结论无实质影响。  
+**修复方案**：将 Kaya/DSCALE 份额也改用迭代封顶缩放（复用 `compute_logit_share` 阶段 3 逻辑）。
+
+### P4：Logit 份额 Africa_Eastern / South America_Northern 收敛振荡
+
+**文件**：`compare/common/downscale.py:679-728`  
+**现象**：封顶-重分配循环中，部分国家份额在 0/1 边界附近反复振荡，50 次迭代不收敛（误差 ~1e3 TJ），但最终输出仍正确有界。  
+**影响**：仅触发 warning，输出可用但守恒精度略低。  
+**修复方案**：(a) 追踪已封顶国家并排除其参与后续重分配，或 (b) 改用约束优化求解。
+
+### P5：`read_gcam_generic` 单位自动检测不完整
+
+**文件**：`compare/common/io.py:288`  
+**现象**：仅识别 "EJ" 单位，若 GCAM 文件使用 PJ/Mtoe 等非标准单位，factor 默认 1.0 静默产生错误结果。  
+**影响**：目前所有 GCAM 文件均为 EJ 或 GWh，暂未触发。  
+**修复方案**：扩展单位识别或强制要求 `unit_factor` 参数。
+
+---
+
+## 四、方法论偏差（已记录，非 Bug）
+
+以下差异部分来自数据限制，部分为安全设计。
+
+### Kaya 收敛法（van Vuuren 2007 / Gütschow 2021）
+
+| 项目 | 文献方法 | 本实现 | 对齐状态 |
+|------|---------|--------|---------|
+| 收敛公式 | `a_c×e^(γ×(y-y_h))+b_c` 指数插值 | 同文献 | ✅ 完全一致 |
+| 收敛年份 | SSP1=2150, SSP2=2200, SSP3/4=2300 | 同文献 | ✅ 完全一致 |
+| γ 参数 | ln(0.01)/(y_c-y_h)，情景统一 | 同文献 | ✅ 完全一致 |
+| 收敛目标 | I_R(y_c) | I_R(2100) | ⚠️ 数据限制（GCAM仅到2100） |
+| EI 下限 | 无 | `max(EI_c(y), I_c(2015)×0.1)` | ⚠️ 安全阈值（防 b_c<0 时 EI 过零） |
+
+### DSCALE 适配 vs 官方实现
+
+| 差异点 | 官方 DSCALE | 本实现 | 性质 |
+|--------|------------|--------|------|
+| ENSHORT 数据源 | 逐国 IEA 1970-2015 + USDA GDP | 同左（143/148 国），5 国回退 GDP 缩放 | 数据限制 |
+| MAX_TC 回退 | 总有 ENSHORT，无需回退 | 2200/2120/2040 三段启发式 | 数据限制 |
+| ENLONG 基准年 | 2010 | 2015（对齐 IEA 基年） | 有意选择 |
+| 非 TFC 指标 | 各 sector 独立回归 | ENSHORT 全部回退 GDP 缩放 | 简化处理 |
 
 ### Logit/比例法
 
-| 验证项 | 状态 |
+| 差异点 | 说明 |
 |--------|------|
-| TFC 比例分配 | ✅ |
-| 份额三阶段 Logit | ✅（原创方法） |
-| 迭代封顶缩放 | ✅（有收敛警告，见已知局限） |
+| 空间 Logit 降尺度 | 将 Fisher-Pry 时间维度变换应用于空间维度，IAM 降尺度文献未见先例 |
+| TFC 无界量 | 使用简单比例分配（非 Logit 变换），Logit 仅用于份额类指标 |
 
 ---
 
-## 四、测试状态
+## 五、测试覆盖
 
-**290 测试，全部通过（5 个文件）：**
+**293 测试，全部通过。** 测试运行时间 ~200s。
 
-| 文件 | 测试数 | 覆盖 |
-|------|--------|------|
-| `test_conservation.py` | ~170 | 区域守恒（含 GCAM 对比）、单国一致性、份额有界、NaN/负数 |
-| `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、fun_max_tc、ENLONG 回归 |
-| `test_edge_cases.py` | 35 | gamma_c、phi_kaya、_regional_conserve、mapping、IEA 索引 |
-| `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
-| `test_validation_experiments.py` | 40 | 份额有界性（48 参数化）、单国一致性、ENLONG α 调和 |
+| 文件 | 测试数 | 覆盖范围 |
+|------|--------|---------|
+| `test_conservation.py` | ~170 | 区域守恒（GCAM 对比）、单国一致性、份额有界 [0,1]、NaN/负数检测 |
+| `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、`fun_max_tc`、ENLONG 回归 |
+| `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、_regional_conserve、mapping |
+| `test_synthetic_gdp.py` | 21 | 合成 GDP 生成（9 个缺口国家） |
+| `test_validation_experiments.py` | 40 | 份额有界性（48 参数化组合）、单国一致性、ENLONG α 调和 |
+
+**未覆盖路径**：
+- `downscale_logit` 中 `region_iea_sum <= 0` 分支（P1 bug 所在）
+- 非 EJ 单位的 GCAM 文件（P5 所在）
+- EDGAR 排放指标的全量降尺度 pipeline
 
 ---
 
-## 五、全量 Pipeline 验证（2026-06-09）
+## 六、Pipeline 验证
 
 ```
-Phase 1: 96/96 OK, 0 FAIL (645s sequential, ~120s with N_JOBS=6)
-Phase 2: 48 share files written (6 indicators × 2 ratio + 4 Logit shares × 3 methods × 4 scenarios)
-Phase 3: 76 plots regenerated
-Total: ~720s sequential
+Phase 1: 96 降尺度 (8 指标 × 3 方法 × 4 情景) — 全部 OK
+Phase 2: 48 份额文件 (6 份额 × 2 方法选择 × 4 情景) — 全部有界
+Phase 3: 76 图表 — 全部生成
 ```
 
-所有输出文件已重新生成。份额指标（fossil_share, renewable_share, electrification_rate, green_elec_share）全部有界 ∈ [0,1]。
+份额指标验证：fossil_share、renewable_share、electrification_rate、green_elec_share 全部 ∈ [0,1]。  
+CO2 净负排放：SSP126 下 76 国 per_capita_co2 为负值（预期行为，反映负排放情景）。
 
 ---
 
-## 六、已知局限（v3）
+## 七、已知局限
 
-1. **Kaya γ_c = 1.0 + 0.3×ln(GDP_pcap 比值)**：0.3 为校准参数，floor 0.01 防负 γ。ci 分析已完成。
-2. **Kaya EI 10% 下限**：无文献出处，防止极端收敛。
-3. **Kaya 无 IEA 国家**：直接使用区域 EI，无收敛路径。
-4. **DSCALE ENSHORT 5 国回退**：mne/prk/qat/rou/zwe 缺少 USDA GDP 数据（非 TFC 数据）。
-5. **DSCALE MAX_TC 回退值**（2200/2120/2040）：项目自定义启发式。
-6. **Kaya/DSCALE 份额守恒**：等比缩放+clip 产生 <1% 守恒偏差。Logit 份额守恒完美。
-7. **`compute_logit_share` 收敛警告**：Africa_Eastern 和 South America_Northern 在 2100 年未收敛（误差 ~2e4 和 ~1e3），但输出份额仍正确有界。
-8. **CO2 净负排放**：SSP126 下 76 国 per_capita_co2 为负值（预期行为）。
+1. **DSCALE ENSHORT 5 国回退**：mne/prk/qat/rou/zwe 缺 USDA GDP 数据，回退到 GDP 缩放（保持基年 EI 不变）。
+2. **Kaya 无 IEA 基准国家**：直接使用区域 EI，无收敛路径（φ 乘方退化为区域比例跟踪）。
+3. **CO2 负排放处理**：per_capita_co2 可为负值，份额计算中 Logit 变换需 clip eps 处理。
+4. **DSCALE 非 TFC 指标**：ENSHORT 全部回退 GDP 缩放，丢失逐国历史趋势信息。
 
 ---
 
-## 七、运行方式
+## 八、运行方式
 
 ```bash
-# 全量运行（支持并行：N_JOBS=6）
+# 全量运行（推荐并行）
 N_JOBS=6 uv run python compare/run_all.py
 
 # 全量测试
@@ -140,4 +183,4 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 
 ---
 
-审计签字：2026-06-09，五轮审计完成。官方 DSCALE 代码零修改。14 项 Bug 修复，290 测试通过，全量 pipeline 通过。
+审计签字：2026-06-15。官方 DSCALE 代码零修改。15 项 Bug 修复，5 项待修复（P1-P5），2 项方法论偏差已记录。

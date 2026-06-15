@@ -115,7 +115,7 @@
 
 | 文件 | 测试数 | 覆盖范围 |
 |------|--------|---------|
-| `test_conservation.py | 108 | 区域守恒（GCAM 对比）、单国一致性、份额有界、NaN/负数、情景排序 |
+| `test_conservation.py` | 108 | 区域守恒（GCAM 对比）、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、`fun_max_tc`、ENLONG 回归 |
 | `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、mapping、zero-IEA |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成（9 个缺口国家） |

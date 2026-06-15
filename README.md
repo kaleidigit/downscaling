@@ -289,7 +289,7 @@ uv run python -m pytest compare/tests/ -q -m "not slow"  # 核心测试 ~60s
 
 | 文件 | 测试数 | 覆盖 |
 |------|--------|------|
-| `test_conservation.py | 108 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
+| `test_conservation.py` | 108 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 公式逐元素对比 |
 | `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、zero-IEA |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |

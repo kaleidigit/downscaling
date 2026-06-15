@@ -274,9 +274,11 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 |------|------|------|
 | `{method}_{indicator}_downscaled_{scenario}.xlsx` | xlsx | 降尺度结果（Scenario, iso, Country, Region, 2015...2100），6 位小数 |
 | `{method}_{indicator}_log.txt` | txt | 守恒校验日志 |
-| `dashboard_{indicator}_{scenario}.png` | png | 5 面板仪表盘（全球总计、Top-10、散点图、偏差分布） |
-| `share_{indicator}_{scenario}.png` | png | 4 份份额指标对比（Top-5 时间序列、分布直方图、散点图） |
-| `cross_indicator_{scenario}.png` | png | 跨指标方法一致性（相关性 + CV） |
+| `dashboard_{indicator}_all.png` | png | 多场景 2×2 仪表盘（8 张，含全球总量 + 偏差分布） |
+| `share_{indicator}_all.png` | png | 多场景 2×2 份额对比（6 张） |
+| `convergence_profile.png` | png | 收敛特性（Kaya w(t) + DSCALE 转换 + 方法分歧度） |
+| `compare_scatter_{scenario}.png` | png | TFC 方法间散点图（2 行 × 3 列，2050+2100） |
+| `global_summary.png` | png | 全局汇总（5 面板：指标变化、相关性、情景对比、份额、收敛） |
 
 ---
 

@@ -130,7 +130,7 @@
 ```
 Phase 1: 96 降尺度 (8 指标 × 3 方法 × 4 情景) — 全部 OK
 Phase 2: 48 份额文件 (6 份额 × 3 方法 × 4 情景) — 全部有界
-Phase 3: 68 图表 — 全部生成
+Phase 3: 20 图表（多场景合并 2×2 + 收敛特性 + 全局汇总）— 全部生成
 ```
 
 份额指标验证：fossil_share、renewable_share、electrification_rate、green_elec_share 全部 ∈ [0,1]。  

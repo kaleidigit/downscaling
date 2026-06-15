@@ -589,20 +589,18 @@ def compute_ei_trend_2015_2020(
 
 def write_output(df: pd.DataFrame, method: str, scenario: str) -> Path:
     """按统一格式写 Excel，返回文件路径（兼容旧接口）。"""
-    from .config import OUTPUT_DIR
     return _write_output_generic(df, method, scenario, "TFC")
 
 
 def write_output_for(df: pd.DataFrame, method: str, scenario: str, prefix: str) -> Path:
     """按统一格式写 Excel，指定 prefix。"""
-    from .config import OUTPUT_DIR
     return _write_output_generic(df, method, scenario, prefix)
 
 
 def _write_output_generic(df: pd.DataFrame, method: str, scenario: str, prefix: str) -> Path:
-    from .config import OUTPUT_DIR, YEARS
+    from .config import OUTPUT_DATA_DIR, YEARS
 
-    out_path = OUTPUT_DIR / f"{method}_{prefix}_downscaled_{scenario}.xlsx"
+    out_path = OUTPUT_DATA_DIR / f"{method}_{prefix}_downscaled_{scenario}.xlsx"
     year_cols = [y for y in YEARS if y in df.columns]
     cols = ["Scenario", "iso", "Country", "Region"] + year_cols
     df = df[[c for c in cols if c in df.columns]]

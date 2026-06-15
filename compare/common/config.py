@@ -4,7 +4,11 @@ from typing import Callable
 BASE_DIR = Path(__file__).resolve().parents[2]       # downscaling/
 COMPARE_DIR = BASE_DIR / "compare"
 OUTPUT_DIR = COMPARE_DIR / "output"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DATA_DIR = OUTPUT_DIR / "data"
+OUTPUT_LOGS_DIR = OUTPUT_DIR / "logs"
+OUTPUT_PLOTS_DIR = OUTPUT_DIR / "plots"
+for _d in (OUTPUT_DIR, OUTPUT_DATA_DIR, OUTPUT_LOGS_DIR, OUTPUT_PLOTS_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
 DATA_DIR = BASE_DIR / "data"
 
 SCENARIOS = ["SSP126", "SSP245", "SSP434", "SSP460"]

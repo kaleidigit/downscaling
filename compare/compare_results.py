@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
 from compare.common.config import (
-    OUTPUT_DIR, SCENARIOS, YEARS, INDICATORS, DERIVED_SHARES,
+    OUTPUT_DATA_DIR, OUTPUT_PLOTS_DIR, SCENARIOS, YEARS, INDICATORS, DERIVED_SHARES,
 )
 
 METHODS = ["logit", "kaya", "dscale"]
@@ -36,7 +36,7 @@ def _load(key: str, scenario: str) -> dict[str, pd.DataFrame]:
     cfg = INDICATORS.get(key)
     prefix = cfg.output_prefix if cfg else key
     for m in METHODS:
-        path = OUTPUT_DIR / f"{m}_{prefix}_downscaled_{scenario}.xlsx"
+        path = OUTPUT_DATA_DIR / f"{m}_{prefix}_downscaled_{scenario}.xlsx"
         if path.exists():
             df = pd.read_excel(path)
             data[m] = df[df["iso"] != "oth"] if "iso" in df.columns else df
@@ -46,7 +46,7 @@ def _load(key: str, scenario: str) -> dict[str, pd.DataFrame]:
 def _load_share(key: str, scenario: str) -> dict[str, pd.DataFrame]:
     data = {}
     for m in METHODS:
-        path = OUTPUT_DIR / f"{m}_{key}_downscaled_{scenario}.xlsx"
+        path = OUTPUT_DATA_DIR / f"{m}_{key}_downscaled_{scenario}.xlsx"
         if path.exists():
             df = pd.read_excel(path)
             data[m] = df[df["iso"] != "oth"] if "iso" in df.columns else df
@@ -99,7 +99,7 @@ def plot_indicator_dashboard_all_scenarios(indicator_key: str) -> Path | None:
 
     fig.suptitle(f"{cfg.name} ({cfg.sdg}) — All Scenarios", fontsize=14, y=1.01)
     fig.tight_layout()
-    out = OUTPUT_DIR / f"dashboard_{indicator_key}_all.png"
+    out = OUTPUT_PLOTS_DIR / f"dashboard_{indicator_key}_all.png"
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     return out
@@ -164,7 +164,7 @@ def plot_share_all_scenarios(share_key: str) -> Path | None:
 
     fig.suptitle(f"{spec['name']} ({spec['sdg']}) — All Scenarios", fontsize=14, y=1.01)
     fig.tight_layout()
-    out = OUTPUT_DIR / f"share_{share_key}_all.png"
+    out = OUTPUT_PLOTS_DIR / f"share_{share_key}_all.png"
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     return out
@@ -285,7 +285,7 @@ def plot_convergence_profile() -> Path:
 
     fig.suptitle("Convergence Dynamics — Method Characteristics", fontsize=14, y=1.02)
     fig.tight_layout()
-    out = OUTPUT_DIR / "convergence_profile.png"
+    out = OUTPUT_PLOTS_DIR / "convergence_profile.png"
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     return out
@@ -329,7 +329,7 @@ def plot_method_scatter_two_years(scenario: str = "SSP126") -> Path:
 
     fig.suptitle(f"TFC Method Agreement — {scenario}", fontsize=14, y=1.01)
     fig.tight_layout()
-    out = OUTPUT_DIR / f"compare_scatter_{scenario}.png"
+    out = OUTPUT_PLOTS_DIR / f"compare_scatter_{scenario}.png"
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     return out
@@ -455,7 +455,7 @@ def plot_global_summary() -> Path:
 
     fig.suptitle("Global Summary — Multi-Indicator × Multi-Method × Multi-Scenario",
                  fontsize=14, y=1.01)
-    out = OUTPUT_DIR / "global_summary.png"
+    out = OUTPUT_PLOTS_DIR / "global_summary.png"
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     return out

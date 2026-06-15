@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 _DSCALE_REPO = Path(__file__).resolve().parents[2] / "DSCALE"
 sys.path.insert(0, str(_DSCALE_REPO))
 
-from compare.common.config import SCENARIOS, INDICATORS, DERIVED_SHARES, YEARS, OUTPUT_DIR
+from compare.common.config import SCENARIOS, INDICATORS, DERIVED_SHARES, YEARS, OUTPUT_DATA_DIR
 from compare.common.downscale import (
     compute_logit_share, compute_kaya_share, compute_dscale_share,
     load_gcam, _regional_conserve, _finalize_df,
@@ -73,7 +73,7 @@ class TestSingleCountryConsistency:
         for iso in single_region_isos:
             vals = {}
             for method in ["logit", "kaya", "dscale"]:
-                path = OUTPUT_DIR / f"{method}_TFC_downscaled_{scenario}.xlsx"
+                path = OUTPUT_DATA_DIR / f"{method}_TFC_downscaled_{scenario}.xlsx"
                 if not path.exists():
                     continue
                 df = pd.read_excel(path)

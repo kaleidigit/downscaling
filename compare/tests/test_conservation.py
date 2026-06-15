@@ -12,13 +12,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from compare.common.config import SCENARIOS, INDICATORS, DERIVED_SHARES, YEARS, OUTPUT_DIR
+from compare.common.config import SCENARIOS, INDICATORS, DERIVED_SHARES, YEARS, OUTPUT_DATA_DIR
 
 METHODS = ["logit", "kaya", "dscale"]
 
 
 def _load(method: str, prefix: str, scenario: str) -> pd.DataFrame:
-    p = OUTPUT_DIR / f"{method}_{prefix}_downscaled_{scenario}.xlsx"
+    p = OUTPUT_DATA_DIR / f"{method}_{prefix}_downscaled_{scenario}.xlsx"
     if not p.exists():
         raise FileNotFoundError(str(p))
     return pd.read_excel(p, engine="openpyxl")
@@ -257,7 +257,7 @@ def test_all_config_paths_exist():
 
 def test_output_files_have_expected_count():
     """产出文件数量验证。"""
-    count = len(list(OUTPUT_DIR.glob("*_downscaled_*.xlsx")))
+    count = len(list(OUTPUT_DATA_DIR.glob("*_downscaled_*.xlsx")))
     assert count >= 140, f"产出文件应 ≥140（96 降尺度 + 48 份额），实际 {count}"
 
 

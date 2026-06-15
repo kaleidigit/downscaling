@@ -211,19 +211,19 @@ def _load_output(method: str, key: str, scenario: str):
             df_out[y] = df[y]
         return df_out
 
-    from compare.common.config import OUTPUT_DIR
+    from compare.common.config import OUTPUT_DATA_DIR
 
     # 使用 INDICATORS 中的 output_prefix 查找文件
     prefix = key
     if key in INDICATORS:
         prefix = INDICATORS[key].output_prefix
 
-    path = OUTPUT_DIR / f"{method}_{prefix}_downscaled_{scenario}.xlsx"
+    path = OUTPUT_DATA_DIR / f"{method}_{prefix}_downscaled_{scenario}.xlsx"
     if path.exists():
         return pd.read_excel(path)
     # Fallback: try various prefixes
     for alt in [key, key.upper(), key.lower()]:
-        path = OUTPUT_DIR / f"{method}_{alt}_downscaled_{scenario}.xlsx"
+        path = OUTPUT_DATA_DIR / f"{method}_{alt}_downscaled_{scenario}.xlsx"
         if path.exists():
             return pd.read_excel(path)
     raise FileNotFoundError(f"Cannot find output for {method}_{key}_{scenario} (tried prefix={prefix})")

@@ -52,7 +52,7 @@ def downscale_tfc(scenario: str) -> pd.DataFrame:
     # 写入输出
     from ..common.io import write_output_for
     from ..common.conservation import check_regional_conservation, check_global_conservation, write_log
-    from ..common.config import OUTPUT_DIR
+    from ..common.config import OUTPUT_LOGS_DIR
 
     gcam_scen = gcam[gcam["Scenario"] == scenario]
     n_single = len(iea_single)
@@ -67,6 +67,6 @@ def downscale_tfc(scenario: str) -> pd.DataFrame:
         check_regional_conservation(df, gcam_scen),
         check_global_conservation(df, gcam_scen),
     ])
-    log_path.rename(OUTPUT_DIR / f"dscale_{cfg.key}_log.txt")
+    log_path.rename(OUTPUT_LOGS_DIR / f"dscale_{cfg.key}_log.txt")
 
     return df

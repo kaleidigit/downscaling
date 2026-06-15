@@ -4,7 +4,7 @@ from typing import List
 
 import pandas as pd
 
-from .config import YEARS, OUTPUT_DIR
+from .config import YEARS, OUTPUT_LOGS_DIR
 
 
 def check_regional_conservation(
@@ -55,7 +55,7 @@ def check_global_conservation(
 def write_log(method: str, reports: list[str], path: Path | None = None) -> Path:
     """写日志文件，reports 为字符串列表，每段间空行分隔"""
     if path is None:
-        path = OUTPUT_DIR / f"{method}_TFC_log.txt"
+        path = OUTPUT_LOGS_DIR / f"{method}_TFC_log.txt"
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"=== {method} TFC 降尺度日志 ===\n")
         f.write(f"运行时间: {datetime.now().isoformat()}\n\n")

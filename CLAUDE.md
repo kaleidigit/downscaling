@@ -630,10 +630,10 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 
 | 指标 | 值 |
 |------|---|
-| 测试通过 | 226/226（5 个测试文件，0 warnings） |
-| Pipeline 状态 | 96 降尺度 + 48 份额 + 76 图表，全部通过 |
+| 测试通过 | 232/232（5 个测试文件，0 warnings） |
+| Pipeline 状态 | 96 降尺度 + 48 份额 + 68 图表，全部通过 |
 | 审计完成度 | 代码正确性 ✅ / 官方交叉验证 ✅ / 文献引用 ✅ / 边缘覆盖 ✅ |
-| 已知 Bug 修复 | 21 项（v1: 4 + v3: 10 + v4: 7） |
+| 已知 Bug 修复 | 22 项（v1: 4 + v3: 10 + v4: 8） |
 
 ### 已知局限
 
@@ -659,7 +659,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 | 9 | 份额指标 Kaya/DSCALE 简单比值法超界（46/35 国 >1.0）→ Logit 空间收敛 | R3 |
 | 10 | `gamma_c` inf/nan 传播 + 极端贫困国负 γ 发散 | R4-R5 |
 
-### v4 修复（7 项）
+### v4 修复（8 项）
 
 | # | 修复内容 |
 |---|---------|
@@ -670,6 +670,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 | 15 | Logit 份额封顶-重分配振荡 → 已封顶国家排除后续重分配 |
 | 16 | `read_gcam_generic` 仅识别 EJ → 扩展 PJ/Mtoe/GWh + 未知单位 warning |
 | 17 | ENSHORT 回归双 log → 改用 `scipy.stats.linregress` 直对 log 数据回归 |
+| 18 | `industry_co2` unit_factor=1.0 但源数据为 Gg CO₂ → 修正为 0.001 (Gg→Mt) |
 
 ### 测试文件清单
 
@@ -677,9 +678,9 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 |------|--------|---------|
 | `test_conservation.py` | 82 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、ENLONG 回归 |
-| `test_edge_cases.py` | 39 | convergence_gamma、van_vuuren_ei、convergence_weight、_regional_conserve、mapping |
+| `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、mapping、zero-IEA |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
-| `test_validation_experiments.py` | 60 | 份额有界性（48 参数化）、单国一致性（全情景）、ENLONG α 调和 |
+| `test_validation_experiments.py` | 65 | 份额有界性（48 参数化）、单国一致性、ENLONG α 调和、ENSHORT 正确性 |
 
 运行策略：`-m "not slow"` 跳过集成测试（~60s）；全量 ~125s。
 

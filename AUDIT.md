@@ -2,7 +2,7 @@
 
 **项目**：GCAM 区域→国家降尺度三方案对比  
 **审计周期**：2026-06-01 ~ 2026-06-15（五轮递进）  
-**当前状态**：226/226 测试通过 | 21 项 Bug 已修复 | 0 项待修复 | 2 项方法论偏差（已记录）  
+**当前状态**：232/232 测试通过 | 22 项 Bug 已修复 | 0 项待修复 | 2 项方法论偏差（已记录）  
 **审计结论**：三方案降尺度核心算法逻辑正确，区域守恒满足，份额有界性保证。所有已知问题均已修复。
 
 ---
@@ -61,6 +61,7 @@
 | 19 | Logit 份额封顶-重分配振荡 → 迭代不收敛 | 中 | `downscale.py` |
 | 20 | `read_gcam_generic` 仅识别 EJ，其他单位静默错误 | 低 | `io.py` |
 | 21 | ENSHORT 回归双 log（数据已 log 变换又经 LogLogFunc 内层 log） | 高 | `dscale_official.py` |
+| 22 | `industry_co2` unit_factor=1.0 但源数据为 Gg CO₂（应为 0.001→Mt） | 中 | `config.py` |
 
 修复详情：
 - **#16**：在 `downscale_logit` 中添加 `n_r = len(region_isos)`
@@ -110,17 +111,17 @@
 
 ## 五、测试覆盖
 
-**226 测试，全部通过（0 warnings）。** 核心测试 59s，全量 125s。
+**232 测试，全部通过（0 warnings）。** 核心测试 ~60s，全量 ~125s。
 
 | 文件 | 测试数 | 覆盖范围 |
 |------|--------|---------|
-| `test_conservation.py` | 82 | 区域守恒（GCAM 对比）、单国一致性、份额有界 [0,1]、NaN/负数、情景排序 |
+| `test_conservation.py` | 82 | 区域守恒（GCAM 对比）、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、`fun_max_tc`、ENLONG 回归 |
-| `test_edge_cases.py` | 39 | convergence_gamma、van_vuuren_ei、convergence_weight、_regional_conserve、mapping |
+| `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、mapping、zero-IEA |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成（9 个缺口国家） |
-| `test_validation_experiments.py` | 60 | 份额有界性（48 参数化）、单国一致性（全情景）、ENLONG α 调和、边缘场景 |
+| `test_validation_experiments.py` | 65 | 份额有界性（48 参数化）、单国一致性、ENLONG α 调和、ENSHORT 正确性回归测试 |
 
-运行：`-m "not slow"` 跳过 2 个集成测试（59s），日常开发使用。
+运行：`-m "not slow"` 跳过 2 个集成测试（~60s），日常开发使用。
 
 ---
 
@@ -128,8 +129,8 @@
 
 ```
 Phase 1: 96 降尺度 (8 指标 × 3 方法 × 4 情景) — 全部 OK
-Phase 2: 48 份额文件 (6 份额 × 2 方法选择 × 4 情景) — 全部有界
-Phase 3: 76 图表 — 全部生成
+Phase 2: 48 份额文件 (6 份额 × 3 方法 × 4 情景) — 全部有界
+Phase 3: 68 图表 — 全部生成
 ```
 
 份额指标验证：fossil_share、renewable_share、electrification_rate、green_elec_share 全部 ∈ [0,1]。  
@@ -165,4 +166,4 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 
 ---
 
-审计签字：2026-06-15。官方 DSCALE 代码零修改。21 项 Bug 修复，0 项待修复，2 项方法论偏差已记录。0 warnings。
+审计签字：2026-06-15。官方 DSCALE 代码零修改。22 项 Bug 修复，0 项待修复，2 项方法论偏差已记录。0 warnings。

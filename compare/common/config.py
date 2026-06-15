@@ -239,7 +239,7 @@ INDICATORS: dict[str, IndicatorConfig] = {
         gcam_file_pattern="GCAM_industry_{scenario}.xlsx",
         gcam_filter_col="sector", gcam_filter_value="industry",
         gcam_extra_filter=None,
-        gcam_unit_factor=1.0,  # 单位已为 Mt (assume)
+        gcam_unit_factor=0.001,  # Gg CO₂ → Mt
         iea_path=IEA_TFC_PATH,  # placeholder — uses EDGAR
         iea_flow="", iea_product="", iea_year="2015",
         edgar_path=EDGAR_INDUSTRY_PATH,

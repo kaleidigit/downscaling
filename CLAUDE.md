@@ -630,7 +630,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 
 | 指标 | 值 |
 |------|---|
-| 测试通过 | 232/232（5 个测试文件，0 warnings） |
+| 测试通过 | 250/232（5 个测试文件，0 warnings） |
 | Pipeline 状态 | 96 降尺度 + 48 份额 + 68 图表，全部通过 |
 | 审计完成度 | 代码正确性 ✅ / 官方交叉验证 ✅ / 文献引用 ✅ / 边缘覆盖 ✅ |
 | 已知 Bug 修复 | 22 项（v1: 4 + v3: 10 + v4: 8） |
@@ -676,7 +676,7 @@ IEA_WORLDBAL_PATH = DATA_DIR / "iea" / "WORLDBAL_1970_2024.csv"
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
-| `test_conservation.py` | 82 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
+| `test_conservation.py | 95 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 收敛公式逐元素对比、ENLONG 回归 |
 | `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、mapping、zero-IEA |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |

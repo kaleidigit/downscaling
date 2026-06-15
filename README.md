@@ -283,13 +283,13 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 ## 测试
 
 ```bash
-uv run python -m pytest compare/tests/ -q   # 232 测试，全部通过，0 warnings
+uv run python -m pytest compare/tests/ -q   # 250 测试，全部通过，0 warnings
 uv run python -m pytest compare/tests/ -q -m "not slow"  # 核心测试 ~60s
 ```
 
 | 文件 | 测试数 | 覆盖 |
 |------|--------|------|
-| `test_conservation.py` | 82 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
+| `test_conservation.py | 95 | 区域守恒、单国一致性、份额有界、NaN/负数、情景排序 |
 | `test_cross_validate.py` | 24 | 官方 DSCALE 公式逐元素对比 |
 | `test_edge_cases.py` | 40 | convergence_gamma、van_vuuren_ei、convergence_weight、zero-IEA |
 | `test_synthetic_gdp.py` | 21 | 合成 GDP 生成 |
@@ -323,7 +323,7 @@ downscaling/
 │   ├── dscale/                   # 方案 B: DSCALE 官方适配层
 │   │   ├── dscale_official.py    # ENLONG/ENSHORT/收敛/MAX_TC
 │   │   └── downscale_tfc.py      # TFC 专用入口（含 ENSHORT 历史回归）
-│   ├── tests/                    # 5 测试文件 + conftest，232 测试
+│   ├── tests/                    # 5 测试文件 + conftest，250 测试
 │   ├── output/                   # 所有输出（gitignored）
 │   ├── run_all.py                # 一键运行（支持 N_JOBS 并行）
 │   └── compare_results.py        # 对比可视化
@@ -340,7 +340,7 @@ downscaling/
 
 ## 审计状态
 
-v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。22 项 Bug 修复。232 测试全部通过，0 warnings。详见 `AUDIT.md`。
+v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。22 项 Bug 修复。250 测试全部通过，0 warnings。详见 `AUDIT.md`。
 
 ---
 

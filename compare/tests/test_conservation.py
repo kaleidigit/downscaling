@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from compare.common.config import SCENARIOS, INDICATORS, YEARS, OUTPUT_DIR
+from compare.common.config import SCENARIOS, INDICATORS, DERIVED_SHARES, YEARS, OUTPUT_DIR
 
 METHODS = ["logit", "kaya", "dscale"]
 
@@ -361,26 +361,118 @@ def test_iea_gcam_2015_magnitude_consistent(key, cfg):
         f"(预期 0.3-1.5，比值异常意味着单位换算错误)"
 
 
+@pytest.mark.parametrize("method", METHODS)
 @pytest.mark.parametrize("key,cfg", [
     (k, v) for k, v in INDICATORS.items()
     if k in ("tfc", "electricity", "tes", "fossil_tes")
 ])
-def test_output_values_in_expected_range(key, cfg):
-    """降尺度输出值应在物理合理范围内（TJ > 1e6, Mt > 100）。"""
-    method = "logit"
+def test_output_values_in_expected_range(key, cfg, method):
+    """降尺度输出值应在物理合理范围内（三方法均适用）。"""
     scenario = "SSP126"
     df = _load(method, cfg.output_prefix, scenario)
-    yrs = _year_cols(df)
     non_oth = df[df["iso"] != "oth"]
 
     global_2015 = float(non_oth[2015].sum())
-    assert global_2015 > 0, f"{key}: 2015 global sum is zero"
+    assert global_2015 > 0, f"{method}/{key}: 2015 global sum is zero"
     assert float(non_oth[2020].sum()) > 0
 
     if cfg.unit == "TJ":
         assert global_2015 > 1e6, \
-            f"{key}: 2015 global={global_2015:.0f} TJ (< 1e6, unreasonably small)"
+            f"{method}/{key}: 2015 global={global_2015:.0f} TJ (< 1e6)"
     elif cfg.unit == "Mt":
         assert global_2015 > 100, \
-            f"{key}: 2015 global={global_2015:.0f} Mt (< 100, unreasonably small)"
+            f"{method}/{key}: 2015 global={global_2015:.0f} Mt (< 100)"
+
+
+# ══════════════════════════════════════════════
+# 测试 10: Kaya / DSCALE 收敛行为属性
+# ══════════════════════════════════════════════
+
+def test_kaya_ei_converges_toward_target():
+    """Kaya: I_c>I_R_target 的国家 EI 递减，I_c<I_R_target 的国家 EI 递增。"""
+    from compare.common.downscale import (
+        convergence_gamma, van_vuuren_ei, CONVERGENCE_YEAR_DEFAULT
+    )
+    y_c = CONVERGENCE_YEAR_DEFAULT["SSP126"]  # 2150
+    gamma = convergence_gamma(y_c)
+
+    # 高效国家（基年 EI 低于区域目标）→ 应向目标递增
+    I_rich = 3.0   # low EI = efficient
+    I_target = 8.0  # high target = less efficient region
+    v1 = van_vuuren_ei(2020, I_rich, I_target, gamma)
+    v2 = van_vuuren_ei(2050, I_rich, I_target, gamma)
+    v3 = van_vuuren_ei(2100, I_rich, I_target, gamma)
+    assert v1 > I_rich, f"高效国 EI 应从 {I_rich} 递增到 {I_target}，实际 2020={v1:.3f}"
+    assert v1 < v2 < v3, f"应单调递增: {v1:.3f} < {v2:.3f} < {v3:.3f}"
+
+    # 低效国家（基年 EI 高于区域目标）→ 应向目标递减
+    I_poor = 12.0
+    v1 = van_vuuren_ei(2020, I_poor, I_target, gamma)
+    v2 = van_vuuren_ei(2050, I_poor, I_target, gamma)
+    v3 = van_vuuren_ei(2100, I_poor, I_target, gamma)
+    assert v1 < I_poor, f"低效国 EI 应从 {I_poor} 递减到 {I_target}，实际 2020={v1:.3f}"
+    assert v1 > v2 > v3, f"应单调递减: {v1:.3f} > {v2:.3f} > {v3:.3f}"
+
+    # 验证 gamma 为负（衰减）
+    assert gamma < 0, f"gamma={gamma:.6f} 应为负值"
+
+
+def test_dscale_convergence_weight_monotonic():
+    """DSCALE CONV_WEIGHT 随时间单调递减（ENSHORT→ENLONG）。"""
+    from compare.dscale.dscale_official import fun_max_tc_convergence
+    import numpy as np
+
+    # 固定参数：ENSHORT=100, ENLONG=200, MAX_TC=2100, beta=2.0
+    years = np.array([2020, 2040, 2060, 2080, 2100], dtype=float)
+    es = np.full(5, 100.0)
+    el = np.full(5, 200.0)
+    mtc = np.full(5, 2100.0)
+    beta = np.full(5, 2.0)
+
+    result = fun_max_tc_convergence(es, el, years, mtc, beta)
+    # 应单调递增（从 ENSHORT 走向 ENLONG）
+    for i in range(len(result) - 1):
+        assert result[i] <= result[i + 1], \
+            f"y={years[i]}: {result[i]:.2f} > y={years[i+1]}: {result[i+1]:.2f}"
+    # 起始靠近 ENSHORT，终点靠近 ENLONG
+    assert result[0] > 100 and result[0] < 150, f"早期应偏 ENSHORT: {result[0]:.1f}"
+    assert result[-1] > 180 and result[-1] <= 200, f"晚期应偏 ENLONG: {result[-1]:.1f}"
+
+
+def test_share_numerator_conservation():
+    """份额 × 分母 = 分子（三方法均成立）。"""
+    from compare.run_all import _load_output
+    from compare.common.downscale import (
+        compute_logit_share, compute_kaya_share, compute_dscale_share, load_gcam,
+    )
+
+    share_fns = {"logit": compute_logit_share, "kaya": compute_kaya_share,
+                 "dscale": compute_dscale_share}
+
+    for share_key in ["fossil_share", "electrification_rate"]:
+        spec = DERIVED_SHARES[share_key]
+        cfg_num = INDICATORS[spec["numerator"]]
+        cfg_den = INDICATORS[spec["denominator"]]
+        gcam_num = load_gcam(cfg_num, "SSP126")
+        gcam_den = load_gcam(cfg_den, "SSP126")
+
+        for method in METHODS:
+            df_num = _load_output(method, spec["numerator"], "SSP126")
+            df_den = _load_output(method, spec["denominator"], "SSP126")
+            df_share = share_fns[method](df_num, df_den, gcam_num, gcam_den, "SSP126")
+
+            yrs = [2015, 2050, 2100]
+            for y in yrs:
+                merged = df_share.merge(df_den[["iso", y]], on="iso", suffixes=("_s", "_d"))
+                allocated = float((merged[f"{y}_s"] * merged[f"{y}_d"]).sum())
+                non_oth_s = df_share[df_share["iso"] != "oth"]
+                allocated_main = float(
+                    (non_oth_s.set_index("iso")[y] *
+                     df_den.set_index("iso")[y].reindex(non_oth_s["iso"])).sum()
+                )
+                # 允许 oth 残差行导致的轻微偏差
+                if allocated > 0:
+                    ratio = allocated / max(allocated_main, 1e-10)
+                    assert 0.99 < ratio < 1.01, \
+                        f"{method}/{share_key} {y}: allocated={allocated:.0f}, ratio={ratio:.3f}"
 

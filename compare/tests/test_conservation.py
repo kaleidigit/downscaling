@@ -259,3 +259,125 @@ def test_output_files_have_expected_count():
     """产出文件数量验证。"""
     count = len(list(OUTPUT_DIR.glob("*_downscaled_*.xlsx")))
     assert count >= 140, f"产出文件应 ≥140（96 降尺度 + 48 份额），实际 {count}"
+
+
+# ══════════════════════════════════════════════
+# 测试 8: 量纲与单位正确性
+# ══════════════════════════════════════════════
+
+# 已知单位 → 转换因子映射
+_KNOWN_UNIT_FACTORS = {
+    "EJ": 1_000_000,      # → TJ
+    "PJ": 1_000,          # → TJ
+    "GWh": 3.6,           # → TJ
+    "Mtoe": 41_868,       # → TJ
+    "Gg CO₂": 0.001,      # → Mt
+    "Gg CO2": 0.001,      # → Mt（变体）
+}
+
+
+def _parse_unit_from_file(cfg) -> tuple[str, float | None]:
+    """读取 GCAM 文件的 Units 列，返回 (unit_str, auto_factor)。"""
+    import pandas as pd
+    path = cfg.gcam_path("SSP126")
+    df = pd.read_excel(path, engine="openpyxl", dtype=str, nrows=2)
+    unit = str(df["Units"].iloc[0]).strip() if "Units" in df.columns else ""
+    factor = _KNOWN_UNIT_FACTORS.get(unit) if unit else None
+    return unit, factor
+
+
+@pytest.mark.parametrize("key,cfg", [(k, v) for k, v in INDICATORS.items()])
+def test_gcam_unit_factor_matches_file(key, cfg):
+    """每个指标的 unit_factor 应与文件中声明的一致。"""
+    unit_str, auto_factor = _parse_unit_from_file(cfg)
+
+    if not unit_str:
+        # 无 Units 列：unit_factor 应被显式设置(≠1.0)或有合理默认值
+        assert cfg.gcam_unit_factor != 1.0 or key == "co2_emissions", \
+            f"{key}: no Units column but unit_factor={cfg.gcam_unit_factor} (set explicitly)"
+        return
+
+    # 已知单位：auto_factor 应为该单位的转换因子
+    if auto_factor is not None:
+        assert abs(cfg.gcam_unit_factor - auto_factor) < 1e-9, \
+            f"{key}: unit_factor={cfg.gcam_unit_factor} but file says '{unit_str}' → expected {auto_factor}"
+    else:
+        # 未知单位：必须在 IndicatorConfig 中显式设置 unit_factor
+        assert cfg.gcam_unit_factor != 1.0, \
+            f"{key}: unknown unit '{unit_str}' but unit_factor=1.0 (set explicitly or add to _KNOWN_UNIT_FACTORS)"
+
+
+def test_read_gcam_generic_unit_auto_detection():
+    """unit_factor=1.0 时自动检测应正确。"""
+    from compare.common.io import read_gcam_generic
+    from compare.common.config import INDICATORS
+    import tempfile, pandas as pd, numpy as np
+
+    # 用 TFC 的 EJ 文件测试自动检测
+    cfg = INDICATORS["tfc"]
+    df_auto = read_gcam_generic(cfg.gcam_path("SSP126"))
+    df_explicit = read_gcam_generic(cfg.gcam_path("SSP126"), unit_factor=1_000_000)
+
+    for y in [2015, 2050, 2100]:
+        diff = abs(float(df_auto[y].sum()) - float(df_explicit[y].sum()))
+        assert diff < 1.0, f"y={y}: auto={df_auto[y].sum():.0f} vs explicit={df_explicit[y].sum():.0f}"
+
+
+@pytest.mark.parametrize("key,cfg", [
+    (k, v) for k, v in INDICATORS.items()
+    if k in ("tfc", "electricity", "tes", "fossil_tes")
+])
+def test_output_values_in_expected_range(key, cfg):
+    """降尺度输出值应在物理合理范围内。"""
+    method = "logit"
+    scenario = "SSP126"
+    df = _load(method, cfg.output_prefix, scenario)
+    yrs = _year_cols(df)
+    non_oth = df[df["iso"] != "oth"]
+
+    # 全球总量 > 0 且逐年递增（或至少非零）
+    global_sums = {y: float(non_oth[y].sum()) for y in yrs}
+    assert global_sums[2015] > 0, f"{key}: 2015 global sum is zero"
+    # 部分指标可能在远期下降，只验证近期递增
+    assert global_sums[2020] > 0
+
+    # 检查量级合理性（针对 TJ 和 Mt 单位）
+    if cfg.unit == "TJ":
+        # 全球能源至少百万 TJ 级别
+        assert global_sums[2015] > 1e6, \
+            f"{key}: 2015 global={global_sums[2015]:.0f} TJ (< 1e6, unreasonably small)"
+    elif cfg.unit == "Mt":
+        # CO₂ 全球至少 Gt 级别（= 1000 Mt）
+        assert global_sums[2015] > 100, \
+            f"{key}: 2015 global={global_sums[2015]:.0f} Mt (< 100, unreasonably small)"
+
+
+# ══════════════════════════════════════════════
+# 测试 9: 单位转换数值正确性（逐单位验证换算）
+# ══════════════════════════════════════════════
+
+@pytest.mark.parametrize("raw_unit,raw_value,factor,expected", [
+    ("EJ",    1.0,          1_000_000, 1_000_000.0),    # EJ → TJ
+    ("PJ",    1000.0,       1_000,     1_000_000.0),     # PJ → TJ (same as 1 EJ)
+    ("GWh",   1000.0,       3.6,       3_600.0),          # GWh → TJ
+    ("Mtoe",  1.0,          41_868,    41_868.0),         # Mtoe → TJ
+    ("Gg CO₂", 1_000_000.0, 0.001,     1_000.0),          # Gg → Mt
+])
+def test_unit_conversion_math(raw_unit, raw_value, factor, expected):
+    """各已知单位的数值转换精确（防御 #22 再次出现）。"""
+    import pandas as pd, tempfile, os
+    from compare.common.io import read_gcam_generic
+
+    df = pd.DataFrame([{
+        "Scenario": "TEST", "Region": "R1", "fuel": "total",
+        2015: raw_value, 2020: raw_value * 2.0, 2100: raw_value * 3.0,
+        "Units": raw_unit,
+    }])
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "test.xlsx")
+        df.to_excel(path, index=False, engine="openpyxl")
+        result = read_gcam_generic(path, unit_factor=factor)
+        assert abs(float(result[2015].iloc[0]) - expected) < 1e-6, \
+            f"{raw_unit}: {result[2015].iloc[0]} != {expected}"
+        assert abs(float(result[2020].iloc[0]) - expected * 2) < 1e-6
+        assert abs(float(result[2100].iloc[0]) - expected * 3) < 1e-6

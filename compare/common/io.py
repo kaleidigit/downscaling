@@ -281,13 +281,13 @@ def read_gcam_generic(
             df = df[df[filter_col].astype(str).str.strip().str.lower() == filter_value.lower()]
 
     # Units
-    if "Units" not in df.columns:
-        import warnings
-        warnings.warn(f"GCAM file {path.name} missing 'Units' column; assuming raw unit = target unit (no conversion)")
     unit = str(df["Units"].iloc[0]).strip() if "Units" in df.columns else ""
     if unit_factor != 1.0:
         factor = unit_factor
     else:
+        if not unit:
+            import warnings
+            warnings.warn(f"GCAM file {path.name} missing 'Units' column; assuming raw unit = target unit (no conversion)")
         unit_upper = unit.upper()
         if "EJ" in unit_upper:
             factor = 1_000_000

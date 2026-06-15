@@ -173,7 +173,8 @@ def fit_enlong_official(
     y = ei[mask].values.astype(float)
 
     ff = LogLogFunc()
-    ff.fit(pd.Series(x), pd.Series(y))
+    with _suppress_np_warnings():
+        ff.fit(pd.Series(x), pd.Series(y))
 
     # ── ENLONG alpha 调和（官方 fun_harmonize_alpha, utils.py:24672）──
     # α += log(y_base) - (α + β × log(x_base))

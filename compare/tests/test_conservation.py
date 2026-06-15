@@ -258,4 +258,4 @@ def test_all_config_paths_exist():
 def test_output_files_have_expected_count():
     """产出文件数量验证。"""
     count = len(list(OUTPUT_DIR.glob("*_downscaled_*.xlsx")))
-    assert count >= 160, f"产出文件应 ≥160，实际 {count}"
+    assert count >= 140, f"产出文件应 ≥140（96 降尺度 + 48 份额），实际 {count}"

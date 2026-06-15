@@ -283,7 +283,7 @@ df = run_indicator('dscale', 'SSP126', INDICATORS['tfc'])
 ## 测试
 
 ```bash
-uv run python -m pytest compare/tests/ -q   # 253 测试，全部通过，0 warnings
+uv run python -m pytest compare/tests/ -q   # 264 测试，全部通过，0 warnings
 uv run python -m pytest compare/tests/ -q -m "not slow"  # 核心测试 ~60s
 ```
 
@@ -323,7 +323,7 @@ downscaling/
 │   ├── dscale/                   # 方案 B: DSCALE 官方适配层
 │   │   ├── dscale_official.py    # ENLONG/ENSHORT/收敛/MAX_TC
 │   │   └── downscale_tfc.py      # TFC 专用入口（含 ENSHORT 历史回归）
-│   ├── tests/                    # 5 测试文件 + conftest，253 测试
+│   ├── tests/                    # 5 测试文件 + conftest，264 测试
 │   ├── output/                   # 所有输出（gitignored）
 │   ├── run_all.py                # 一键运行（支持 N_JOBS 并行）
 │   └── compare_results.py        # 对比可视化
@@ -340,7 +340,7 @@ downscaling/
 
 ## 审计状态
 
-v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。22 项 Bug 修复。253 测试全部通过，0 warnings。详见 `AUDIT.md`。
+v4（2026-06-15）：Kaya 方法切换到 van Vuuren 2007 官方指数插值法。22 项 Bug 修复。264 测试全部通过，0 warnings。详见 `AUDIT.md`。
 
 ---
 

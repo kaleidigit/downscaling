@@ -67,6 +67,8 @@ def downscale_tfc(scenario: str) -> pd.DataFrame:
         check_regional_conservation(df, gcam_scen),
         check_global_conservation(df, gcam_scen),
     ])
-    log_path.rename(OUTPUT_LOGS_DIR / f"dscale_{cfg.key}_log.txt")
+    target_path = OUTPUT_LOGS_DIR / f"dscale_{cfg.key}_log.txt"
+    if log_path != target_path:
+        log_path.rename(target_path)
 
     return df

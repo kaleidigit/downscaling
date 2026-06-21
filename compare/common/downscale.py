@@ -612,7 +612,9 @@ def run_indicator(
     write_output_for(df, method, scenario, cfg.output_prefix)
     log_path = write_log(f"{method}_{cfg.key}", log_lines + reports)
     from .config import OUTPUT_LOGS_DIR
-    log_path.rename(OUTPUT_LOGS_DIR / f"{method}_{cfg.key}_log.txt")
+    target_path = OUTPUT_LOGS_DIR / f"{method}_{cfg.key}_log.txt"
+    if log_path != target_path:
+        log_path.rename(target_path)
 
     return df
 

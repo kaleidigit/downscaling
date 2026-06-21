@@ -285,10 +285,7 @@ def read_gcam_generic(
     if unit_factor != 1.0:
         factor = unit_factor
     else:
-        if not unit:
-            import warnings
-            warnings.warn(f"GCAM file {path.name} missing 'Units' column; assuming raw unit = target unit (no conversion)")
-        unit_upper = unit.upper()
+        unit_upper = unit.upper() if unit else ""
         if "EJ" in unit_upper:
             factor = 1_000_000
         elif "PJ" in unit_upper:
